@@ -1,218 +1,364 @@
 import streamlit as st
+import requests
 import pandas as pd
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
-# 페이지 설정
+
+# ---------------------------------------------------------
+# 1. 기본 화면 설정
+# ---------------------------------------------------------
 st.set_page_config(
-    page_title="서울 100년 기온 변화",
-    page_icon="🌡️",
+    page_title="어제의 박스오피스",
+    page_icon="🎬",
     layout="wide"
 )
 
-st.title("🌡️ 서울의 100년간 연평균 기온 변화")
-st.write("서울의 기온 데이터를 이용하여 연도별 평균기온의 변화를 살펴봅니다.")
+st.title("🎬 어제의 박스오피스")
+st.caption("KOBIS 영화관입장권통합전산망 기준")
 
-# 데이터 주소
-DATA_URL = "https://raw.githubusercontent.com/greatsong/modudata/main/data/seoul.csv"
 
-# 데이터 불러오기
-@st.cache_data
-def load_data():
-    df = pd.read_csv(DATA_URL)
+# ---------------------------------------------------------
+# 2. 한국 시간 기준으로 '어제' 날짜 계산
+# ---------------------------------------------------------
+# Streamlit Cloud 서버가 한국 시간이 아닐 수도 있기 때문에
+# 반드시 Asia/Seoul 시간대를 지정해서 날짜를 계산한다.
+KST = ZoneInfo("Asia/Seoul")
 
-    # 날짜를 날짜 형식으로 변환
-    df["날짜"] = pd.to_datetime(df["날짜"])
+now_kst = datetime.now(KST)
+yesterday = now_kst.date() - timedelta(days=1)
 
-    # 연도 추출
-    df["연도"] = df["날짜"].dt.year
+# KOBIS API가 요구하는 YYYYMMDD 형식으로 변환
+target_date = yesterday.strftime("%Y%m%d")
 
-    # 연도별 평균기온 계산
-    yearly = (
-        df.groupby("연도")["평균기온"]
-        .mean()
-        .reset_index()
+# 화면에 보여줄 날짜
+display_date = yesterday.strftime("%Y년 %m월 %d일")
+
+
+# ---------------------------------------------------------
+# 3. KOBIS API에서 박스오피스 데이터 가져오기
+# ---------------------------------------------------------
+# st.cache_data를 사용하면 같은 날짜를 다시 조회할 때
+# API를 계속 호출하지 않고 약 1시간 동안 저장된 결과를 사용한다.
+@st.cache_data(ttl=3600)
+def get_boxoffice(target_dt):
+    # Streamlit Cloud의 Secrets에서 인증키를 가져온다.
+    # 실제 인증키는 코드에 절대로 작성하지 않는다.
+    try:
+        api_key = st.secrets["KOBIS_KEY"]
+    except Exception:
+        return {
+            "success": False,
+            "message": (
+                "KOBIS 인증키를 찾을 수 없습니다.\n\n"
+                "Streamlit Cloud의 Settings → Secrets에서 "
+                "`KOBIS_KEY`가 등록되어 있는지 확인해 주세요."
+            ),
+            "data": None
+        }
+
+    url = (
+        "https://www.kobis.or.kr/kobisopenapi/webservice/rest/"
+        "boxoffice/searchDailyBoxOfficeList.json"
     )
 
-    return yearly
+    params = {
+        "key": api_key,
+        "targetDt": target_dt
+    }
+
+    try:
+        # KOBIS API 요청
+        response = requests.get(
+            url,
+            params=params,
+            timeout=10
+        )
+
+        # HTTP 오류 확인
+        response.raise_for_status()
+
+        # JSON으로 변환
+        result = response.json()
+
+    except requests.exceptions.Timeout:
+        return {
+            "success": False,
+            "message": (
+                "KOBIS API 요청 시간이 초과되었습니다.\n\n"
+                "잠시 후 다시 실행해 보세요. "
+                "인터넷 연결이나 KOBIS 서버 상태도 확인해 주세요."
+            ),
+            "data": None
+        }
+
+    except requests.exceptions.RequestException as e:
+        return {
+            "success": False,
+            "message": (
+                "KOBIS API에 접속하지 못했습니다.\n\n"
+                f"오류 내용: {e}\n\n"
+                "인터넷 연결과 KOBIS API 서버 상태를 확인해 주세요."
+            ),
+            "data": None
+        }
+
+    except ValueError:
+        return {
+            "success": False,
+            "message": (
+                "KOBIS API에서 정상적인 JSON 데이터를 받지 못했습니다.\n\n"
+                "잠시 후 다시 실행해 보세요."
+            ),
+            "data": None
+        }
+
+    # -----------------------------------------------------
+    # 4. faultInfo 확인
+    # -----------------------------------------------------
+    # KOBIS는 인증키가 틀려도 HTTP 상태코드가 200일 수 있다.
+    # 따라서 반드시 faultInfo가 있는지 확인해야 한다.
+    if "faultInfo" in result:
+        fault_info = result["faultInfo"]
+
+        error_message = fault_info.get(
+            "message",
+            "KOBIS API에서 오류가 발생했습니다."
+        )
+
+        return {
+            "success": False,
+            "message": (
+                "KOBIS API에서 오류가 발생했습니다.\n\n"
+                f"오류 내용: {error_message}\n\n"
+                "다음을 확인해 주세요.\n"
+                "• Streamlit Secrets의 KOBIS_KEY가 정확한지\n"
+                "• KOBIS API 인증키가 활성화되어 있는지\n"
+                "• API 요청 날짜가 올바른지"
+            ),
+            "data": None
+        }
+
+    # -----------------------------------------------------
+    # 5. boxOfficeResult 확인
+    # -----------------------------------------------------
+    boxoffice = result.get("boxOfficeResult")
+
+    if not boxoffice:
+        return {
+            "success": False,
+            "message": (
+                "KOBIS에서 박스오피스 결과를 받지 못했습니다.\n\n"
+                "KOBIS API 응답 구조와 인증키 설정을 확인해 주세요."
+            ),
+            "data": None
+        }
+
+    movie_list = boxoffice.get("dailyBoxOfficeList", [])
+
+    # 영화 목록이 비어 있는 경우
+    if not movie_list:
+        return {
+            "success": False,
+            "message": (
+                f"{display_date}의 영화 목록이 비어 있습니다.\n\n"
+                "다음을 확인해 주세요.\n"
+                "• 조회 날짜에 실제 박스오피스 데이터가 있는지\n"
+                "• KOBIS API가 정상적으로 응답했는지\n"
+                "• KOBIS 인증키가 정상적으로 설정되어 있는지"
+            ),
+            "data": None
+        }
+
+    return {
+        "success": True,
+        "message": "",
+        "data": movie_list
+    }
 
 
-try:
-    data = load_data()
+# ---------------------------------------------------------
+# 6. API 데이터 가져오기
+# ---------------------------------------------------------
+result = get_boxoffice(target_date)
 
-    # 100년 범위에 해당하는 데이터 선택
-    data = data.sort_values("연도")
 
-    st.subheader("연도별 평균기온")
-
-    # Streamlit 기본 라인 차트
-    chart_data = data.set_index("연도")
-    st.line_chart(
-        chart_data,
-        y="평균기온",
-        x_label="연도",
-        y_label="평균기온 (℃)"
+# ---------------------------------------------------------
+# 7. API 요청에 실패한 경우 안내
+# ---------------------------------------------------------
+if not result["success"]:
+    st.error(result["message"])
+    st.info(
+        "💡 문제가 계속되면 Streamlit Cloud의 "
+        "Settings → Secrets에서 KOBIS_KEY 설정을 먼저 확인해 주세요."
     )
+    st.stop()
 
-    # 간단한 통계 정보
-    col1, col2, col3 = st.columns(3)
 
-    with col1:
-        st.metric(
-            "분석 시작 연도",
-            f"{int(data['연도'].min())}년"
-        )
+# ---------------------------------------------------------
+# 8. 영화 데이터를 데이터프레임으로 변환
+# ---------------------------------------------------------
+df = pd.DataFrame(result["data"])
 
-    with col2:
-        st.metric(
-            "분석 종료 연도",
-            f"{int(data['연도'].max())}년"
-        )
 
-    with col3:
-        change = data["평균기온"].iloc[-1] - data["평균기온"].iloc[0]
-        st.metric(
-            "시작-마지막 연도 기온 차이",
-            f"{change:+.2f} ℃"
-        )
+# ---------------------------------------------------------
+# 9. 숫자로 들어와야 하는 항목을 실제 숫자형으로 변환
+# ---------------------------------------------------------
+# KOBIS API에서는 이 값들이 문자열로 제공되므로
+# 정렬과 그래프를 위해 숫자형으로 변환한다.
+numeric_columns = [
+    "rank",
+    "audiCnt",
+    "audiAcc",
+    "scrnCnt",
+    "showCnt",
+    "rankInten"
+]
 
-    st.subheader("연도별 데이터")
-    st.dataframe(
-        data,
-        use_container_width=True,
-        hide_index=True
+for column in numeric_columns:
+    if column in df.columns:
+        df[column] = pd.to_numeric(
+            df[column],
+            errors="coerce"
+        ).fillna(0)
+
+
+# 순위를 숫자 기준으로 정렬
+df = df.sort_values("rank").reset_index(drop=True)
+
+
+# ---------------------------------------------------------
+# 10. 1위 영화 확인
+# ---------------------------------------------------------
+if len(df) == 0:
+    st.error(
+        "영화 데이터가 없습니다. "
+        "KOBIS API 응답을 확인해 주세요."
     )
+    st.stop()
 
-except Exception as e:
-    st.error("데이터를 불러오는 중 문제가 발생했습니다.")
-    st.write(f"오류 내용: {e}")
-@st.cache_data
-def load_data():
-    df = pd.read_csv(DATA_URL)
-
-    # 날짜 형식 변환
-    df["날짜"] = pd.to_datetime(df["날짜"])
-
-    # 평균기온을 숫자형으로 변환
-    df["평균기온"] = pd.to_numeric(df["평균기온"], errors="coerce")
-
-    # 결측값 제거
-    df = df.dropna(subset=["평균기온"])
-
-    return df
+first_movie = df.iloc[0]
 
 
-try:
-    data = load_data()
+# ---------------------------------------------------------
+# 11. 조회 날짜 표시
+# ---------------------------------------------------------
+st.subheader(f"📅 {display_date}")
 
-    st.subheader("일별 평균기온 히스토그램")
-
-    fig = px.histogram(
-        data,
-        x="평균기온",
-        nbins=30,
-        labels={
-            "평균기온": "평균기온 (℃)",
-            "count": "일수"
-        },
-        title="서울의 일별 평균기온 분포"
-    )
-
-    fig.update_layout(
-        xaxis_title="평균기온 (℃)",
-        yaxis_title="일수",
-        bargap=0.05
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    # 기본 통계
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.metric(
-            "전체 관측 일수",
-            f"{len(data):,}일"
-        )
-
-    with col2:
-        st.metric(
-            "평균기온 평균",
-            f"{data['평균기온'].mean():.2f} ℃"
-        )
-
-    with col3:
-        st.metric(
-            "가장 높은 일평균기온",
-            f"{data['평균기온'].max():.1f} ℃"
-        )
-
-except Exception as e:
-    st.error("데이터를 불러오는 중 문제가 발생했습니다.")
-    st.write(f"오류 내용: {e}")
-# 페이지 설정
-st.set_page_config(
-    page_title="서울 최저·최고기온 관계",
-    page_icon="🌡️",
-    layout="wide"
+st.write(
+    "한국 시간 기준으로 어제의 일일 박스오피스를 조회했습니다."
 )
 
-st.title("🌡️ 서울의 최저기온과 최고기온의 관계")
-st.write("날마다의 최저기온과 최고기온 사이의 관계를 산점도로 나타냈습니다.")
 
-# 데이터 주소
-DATA_URL = "https://raw.githubusercontent.com/greatsong/modudata/main/data/seoul.csv"
+# ---------------------------------------------------------
+# 12. 1위 영화 정보
+# ---------------------------------------------------------
+st.header(f"🥇 1위: {first_movie['movieNm']}")
 
-@st.cache_data
-def load_data():
-    df = pd.read_csv(DATA_URL)
+col1, col2, col3 = st.columns(3)
 
-    # 날짜 변환
-    df["날짜"] = pd.to_datetime(df["날짜"])
-
-    # 숫자형 변환
-    df["최저기온"] = pd.to_numeric(df["최저기온"], errors="coerce")
-    df["최고기온"] = pd.to_numeric(df["최고기온"], errors="coerce")
-
-    # 결측값 제거
-    df = df.dropna(subset=["최저기온", "최고기온"])
-
-    return df
-
-try:
-    data = load_data()
-
-    st.subheader("최저기온 vs 최고기온 산점도")
-
-    fig = px.scatter(
-        data,
-        x="최저기온",
-        y="최고기온",
-        opacity=0.3,
-        labels={
-            "최저기온": "최저기온 (℃)",
-            "최고기온": "최고기온 (℃)"
-        },
-        title="서울의 일별 최저기온과 최고기온 관계"
-    )
-
-    fig.update_layout(
-        xaxis_title="최저기온 (℃)",
-        yaxis_title="최고기온 (℃)"
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    # 상관계수 계산
-    corr = data["최저기온"].corr(data["최고기온"])
-
+with col1:
     st.metric(
-        "최저기온-최고기온 상관계수",
-        f"{corr:.3f}"
+        "어제 관객수",
+        f"{int(first_movie['audiCnt']):,}명"
     )
 
-    st.write(
-        f"상관계수는 **{corr:.3f}**로, 최저기온이 높을수록 최고기온도 높아지는 강한 양의 관계를 보입니다."
+with col2:
+    st.metric(
+        "누적 관객수",
+        f"{int(first_movie['audiAcc']):,}명"
     )
 
-except Exception as e:
-    st.error("데이터를 불러오는 중 오류가 발생했습니다.")
-    st.write(e)
+with col3:
+    st.metric(
+        "스크린 수",
+        f"{int(first_movie['scrnCnt']):,}개"
+    )
+
+
+# ---------------------------------------------------------
+# 13. 전체 박스오피스 표
+# ---------------------------------------------------------
+st.header("📊 전체 박스오피스")
+
+# 화면에 표시할 열과 한글 이름을 지정한다.
+table_df = df[
+    [
+        "rank",
+        "movieNm",
+        "openDt",
+        "audiCnt",
+        "audiAcc",
+        "scrnCnt"
+    ]
+].copy()
+
+table_df.columns = [
+    "순위",
+    "영화명",
+    "개봉일",
+    "관객수",
+    "누적관객",
+    "스크린수"
+]
+
+
+# 숫자를 보기 좋게 쉼표가 들어간 문자열로 표시
+# (정렬과 그래프에 사용하는 원본 df는 숫자형 그대로 유지한다.)
+display_df = table_df.copy()
+
+display_df["순위"] = display_df["순위"].astype(int)
+
+display_df["관객수"] = display_df["관객수"].apply(
+    lambda x: f"{int(x):,}"
+)
+
+display_df["누적관객"] = display_df["누적관객"].apply(
+    lambda x: f"{int(x):,}"
+)
+
+display_df["스크린수"] = display_df["스크린수"].apply(
+    lambda x: f"{int(x):,}"
+)
+
+st.dataframe(
+    display_df,
+    use_container_width=True,
+    hide_index=True
+)
+
+
+# ---------------------------------------------------------
+# 14. 관객수 상위 5편 막대그래프
+# ---------------------------------------------------------
+st.header("📈 관객수 상위 5편")
+
+# 관객수가 많은 순서로 정렬한 뒤 5편만 가져온다.
+top5 = (
+    df.sort_values(
+        "audiCnt",
+        ascending=False
+    )
+    .head(5)
+    .copy()
+)
+
+# 그래프에 사용할 데이터만 선택한다.
+chart_df = top5[
+    ["movieNm", "audiCnt"]
+].copy()
+
+# 영화명을 인덱스로 설정하면 Streamlit의 bar_chart에서
+# 영화별 관객수를 쉽게 막대그래프로 표현할 수 있다.
+chart_df = chart_df.set_index("movieNm")
+
+# 막대그래프 표시
+st.bar_chart(
+    chart_df,
+    y="audiCnt"
+)
+
+st.caption(
+    "※ 관객수는 해당 날짜의 일일 관객수이며, "
+    "KOBIS API의 audiCnt 값을 숫자로 변환하여 사용했습니다."
+)
