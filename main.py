@@ -84,3 +84,67 @@ try:
 except Exception as e:
     st.error("데이터를 불러오는 중 문제가 발생했습니다.")
     st.write(f"오류 내용: {e}")
+@st.cache_data
+def load_data():
+    df = pd.read_csv(DATA_URL)
+
+    # 날짜 형식 변환
+    df["날짜"] = pd.to_datetime(df["날짜"])
+
+    # 평균기온을 숫자형으로 변환
+    df["평균기온"] = pd.to_numeric(df["평균기온"], errors="coerce")
+
+    # 결측값 제거
+    df = df.dropna(subset=["평균기온"])
+
+    return df
+
+
+try:
+    data = load_data()
+
+    st.subheader("일별 평균기온 히스토그램")
+
+    fig = px.histogram(
+        data,
+        x="평균기온",
+        nbins=30,
+        labels={
+            "평균기온": "평균기온 (℃)",
+            "count": "일수"
+        },
+        title="서울의 일별 평균기온 분포"
+    )
+
+    fig.update_layout(
+        xaxis_title="평균기온 (℃)",
+        yaxis_title="일수",
+        bargap=0.05
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 기본 통계
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric(
+            "전체 관측 일수",
+            f"{len(data):,}일"
+        )
+
+    with col2:
+        st.metric(
+            "평균기온 평균",
+            f"{data['평균기온'].mean():.2f} ℃"
+        )
+
+    with col3:
+        st.metric(
+            "가장 높은 일평균기온",
+            f"{data['평균기온'].max():.1f} ℃"
+        )
+
+except Exception as e:
+    st.error("데이터를 불러오는 중 문제가 발생했습니다.")
+    st.write(f"오류 내용: {e}")
