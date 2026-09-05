@@ -148,3 +148,71 @@ try:
 except Exception as e:
     st.error("데이터를 불러오는 중 문제가 발생했습니다.")
     st.write(f"오류 내용: {e}")
+# 페이지 설정
+st.set_page_config(
+    page_title="서울 최저·최고기온 관계",
+    page_icon="🌡️",
+    layout="wide"
+)
+
+st.title("🌡️ 서울의 최저기온과 최고기온의 관계")
+st.write("날마다의 최저기온과 최고기온 사이의 관계를 산점도로 나타냈습니다.")
+
+# 데이터 주소
+DATA_URL = "https://raw.githubusercontent.com/greatsong/modudata/main/data/seoul.csv"
+
+@st.cache_data
+def load_data():
+    df = pd.read_csv(DATA_URL)
+
+    # 날짜 변환
+    df["날짜"] = pd.to_datetime(df["날짜"])
+
+    # 숫자형 변환
+    df["최저기온"] = pd.to_numeric(df["최저기온"], errors="coerce")
+    df["최고기온"] = pd.to_numeric(df["최고기온"], errors="coerce")
+
+    # 결측값 제거
+    df = df.dropna(subset=["최저기온", "최고기온"])
+
+    return df
+
+try:
+    data = load_data()
+
+    st.subheader("최저기온 vs 최고기온 산점도")
+
+    fig = px.scatter(
+        data,
+        x="최저기온",
+        y="최고기온",
+        opacity=0.3,
+        labels={
+            "최저기온": "최저기온 (℃)",
+            "최고기온": "최고기온 (℃)"
+        },
+        title="서울의 일별 최저기온과 최고기온 관계"
+    )
+
+    fig.update_layout(
+        xaxis_title="최저기온 (℃)",
+        yaxis_title="최고기온 (℃)"
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 상관계수 계산
+    corr = data["최저기온"].corr(data["최고기온"])
+
+    st.metric(
+        "최저기온-최고기온 상관계수",
+        f"{corr:.3f}"
+    )
+
+    st.write(
+        f"상관계수는 **{corr:.3f}**로, 최저기온이 높을수록 최고기온도 높아지는 강한 양의 관계를 보입니다."
+    )
+
+except Exception as e:
+    st.error("데이터를 불러오는 중 오류가 발생했습니다.")
+    st.write(e)
