@@ -58,8 +58,7 @@ def get_boxoffice(target_dt):
         }
 
     url = (
-        "https://www.kobis.or.kr/kobisopenapi/webservice/rest/"
-        "boxoffice/searchDailyBoxOfficeList.json"
+        "https://www.kobis.or.kr/kobisopenapi/webservice/rest/boxoffice/searchDailyBoxOfficeList.json"
     )
 
     params = {
