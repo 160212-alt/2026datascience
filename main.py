@@ -1,16 +1,14 @@
 import streamlit as st
 import requests
 import pandas as pd
-import matplotlib.pyplot as plt
-import numpy as np
 import plotly.express as px
-from datetime import datetime, timedelta, timezone
+import numpy as np
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
-
-# =========================================================
+# -----------------------------------
 # 기본 설정
-# =========================================================
-
+# -----------------------------------
 st.set_page_config(
     page_title="영화 데이터 그래프 도감",
     layout="wide"
@@ -18,345 +16,248 @@ st.set_page_config(
 
 st.title("🎬 영화 데이터 그래프 도감")
 
-
-# =========================================================
-# KOBIS API
-# =========================================================
-
-API_KEY = st.secrets["KOBIS_KEY"]
-
-KST = timezone(timedelta(hours=9))
-
-yesterday = (
-    datetime.now(KST) - timedelta(days=1)
-).strftime("%Y%m%d")
-
-url = (
-    "https://kobis.or.kr/kobisopenapi/webservice/rest/"
-    "boxoffice/searchDailyBoxOfficeList.json"
-)
-
-params = {
-    "key": API_KEY,
-    "targetDt": yesterday
-}
-
-
-# =========================================================
-# API 데이터 가져오기
-# =========================================================
-
+# -----------------------------------
+# KOBIS API 키
+# -----------------------------------
 try:
-    response = requests.get(
-        url,
-        params=params,
-        timeout=10
-    )
-
-    response.raise_for_status()
-
-    result = response.json()
-
-    movie_list = result[
-        "boxOfficeResult"
-    ][
-        "dailyBoxOfficeList"
-    ]
-
-    if not movie_list:
-        st.warning("어제의 박스오피스 데이터가 없습니다.")
-        st.stop()
-
-    df = pd.DataFrame(movie_list)
-
-except Exception as e:
-    st.error(f"API 데이터를 불러오는 중 오류가 발생했습니다: {e}")
+    KOBIS_KEY = st.secrets["KOBIS_KEY"]
+except Exception:
+    st.error("KOBIS_KEY가 Streamlit Secrets에 설정되어 있지 않습니다.")
     st.stop()
 
+# -----------------------------------
+# 한국 시간 기준 어제 날짜
+# -----------------------------------
+kst = ZoneInfo("Asia/Seoul")
+today = datetime.now(kst).date()
+yesterday = today - timedelta(days=1)
 
-# =========================================================
-# 데이터 정리
-# =========================================================
+target_date = yesterday.strftime("%Y%m%d")
 
-# 숫자로 변환할 열
-number_columns = [
+st.write(f"📅 조회 날짜: {yesterday.strftime('%Y-%m-%d')}")
+
+# -----------------------------------
+# KOBIS 일별 박스오피스 API
+# -----------------------------------
+url = "https://kobis.or.kr/kobisopenapi/webservice/rest/boxoffice/searchDailyBoxOfficeList.json"
+
+params = {
+    "key": KOBIS_KEY,
+    "targetDt": target_date
+}
+
+response = requests.get(url, params=params)
+
+if response.status_code != 200:
+    st.error("API 요청에 실패했습니다.")
+    st.stop()
+
+data = response.json()
+
+# -----------------------------------
+# API 데이터 가져오기
+# -----------------------------------
+try:
+    movies = data["boxOfficeResult"]["dailyBoxOfficeList"]
+except Exception:
+    st.error("영화 데이터를 불러오지 못했습니다.")
+    st.stop()
+
+if not movies:
+    st.warning("해당 날짜의 영화 데이터가 없습니다.")
+    st.stop()
+
+df = pd.DataFrame(movies)
+
+# -----------------------------------
+# 숫자 데이터 변환
+# -----------------------------------
+numeric_columns = [
     "rank",
+    "rankInten",
     "salesAmt",
-    "salesShare",
-    "salesInten",
-    "salesChange",
-    "salesAcc",
     "audiCnt",
-    "audiInten",
-    "audiChange",
     "audiAcc",
     "scrnCnt",
     "showCnt"
 ]
 
-for column in number_columns:
-    if column in df.columns:
-        df[column] = pd.to_numeric(
-            df[column],
+for col in numeric_columns:
+    if col in df.columns:
+        df[col] = pd.to_numeric(
+            df[col],
             errors="coerce"
         )
 
-
-# 총 관객수
-df["total_audi"] = df["audiAcc"]
-
+# total_audi 컬럼 만들기
 df["total_audi"] = pd.to_numeric(
-    df["total_audi"],
+    df["audiAcc"],
     errors="coerce"
 )
 
-df = df.dropna(
-    subset=["total_audi"]
+# ===================================
+# 1. 영화별 총 관객 수 TOP 10
+# ===================================
+st.subheader("① 영화별 총 관객 수 TOP 10")
+
+top10 = df.sort_values(
+    "total_audi",
+    ascending=False
+).head(10)
+
+fig1 = px.bar(
+    top10,
+    x="movieNm",
+    y="total_audi",
+    title="영화별 총 관객 수 TOP 10",
+    labels={
+        "movieNm": "영화명",
+        "total_audi": "총 관객 수"
+    },
+    text="total_audi"
 )
 
-
-# =========================================================
-# 1. 일일 관객수 TOP 5
-# =========================================================
-
-st.subheader("1. 일일 관객수 TOP 5")
-
-top5 = (
-    df.sort_values(
-        "audiCnt",
-        ascending=False
-    )
-    .head(5)
-    .copy()
+fig1.update_traces(
+    texttemplate="%{text:,}",
+    textposition="outside"
 )
 
-fig1, ax1 = plt.subplots(
-    figsize=(10, 5)
+fig1.update_layout(
+    xaxis_tickangle=-45
 )
 
-ax1.bar(
-    top5["movieNm"],
-    top5["audiCnt"]
+st.plotly_chart(
+    fig1,
+    use_container_width=True
 )
 
-ax1.set_title(
-    "어제 일일 관객수 TOP 5"
-)
+# ===================================
+# 2. 장르별 영화 트리맵
+# ===================================
+st.subheader("② 장르별 영화 총 관객 수")
 
-ax1.set_xlabel("영화")
-ax1.set_ylabel("일 관객수")
-
-plt.xticks(
-    rotation=20,
-    ha="right"
-)
-
-plt.tight_layout()
-
-st.pyplot(fig1)
-
-
-# =========================================================
-# 2. 장르 → 영화 트리맵
-# =========================================================
-
-st.subheader("2. 장르별 영화 총 관객수 트리맵")
-
-# KOBIS 일일 박스오피스 API에는 장르 정보가 없으므로
-# 영화 상세정보 API를 이용해서 장르를 가져온다.
-
-genre_data = []
+# 영화 상세정보 API에서 장르 가져오기
+genre_list = []
 
 detail_url = (
     "https://kobis.or.kr/kobisopenapi/webservice/rest/"
     "movie/searchMovieInfo.json"
 )
 
-for _, row in df.iterrows():
-
-    movie_code = row.get("movieCd")
-
-    if not movie_code:
-        continue
-
-    detail_params = {
-        "key": API_KEY,
-        "movieCd": movie_code
+for movie in df["movieCd"]:
+    params_movie = {
+        "key": KOBIS_KEY,
+        "movieCd": movie
     }
 
     try:
         detail_response = requests.get(
             detail_url,
-            params=detail_params,
-            timeout=10
+            params=params_movie
         )
 
-        detail_response.raise_for_status()
+        detail_data = detail_response.json()
 
-        detail_result = detail_response.json()
+        movie_info = detail_data["movieInfoResult"]["movieInfo"]
 
-        movie_info = (
-            detail_result
-            .get("movieInfoResult", {})
-            .get("movieInfo", {})
-        )
-
-        genres = movie_info.get(
-            "genres",
-            []
-        )
+        genres = movie_info.get("genres", [])
 
         if genres:
-            genre_name = genres[0].get(
-                "genreNm",
-                "기타"
-            )
+            genre_name = genres[0]["genreNm"]
         else:
             genre_name = "기타"
 
     except Exception:
         genre_name = "기타"
 
-    genre_data.append({
-        "movieNm": row["movieNm"],
-        "genre": genre_name,
-        "total_audi": row["total_audi"]
-    })
+    genre_list.append(genre_name)
 
+df["genre"] = genre_list
 
-genre_df = pd.DataFrame(
-    genre_data
+# 트리맵
+fig2 = px.treemap(
+    df,
+    path=["genre", "movieNm"],
+    values="total_audi",
+    title="장르별 영화 총 관객 수",
+    hover_data={
+        "total_audi": ":,"
+    }
 )
 
-
-if not genre_df.empty:
-
-    fig2 = px.treemap(
-        genre_df,
-        path=["genre", "movieNm"],
-        values="total_audi",
-        title="장르별 영화 총 관객수",
-        hover_data={
-            "total_audi": ":,"
-        }
+fig2.update_traces(
+    hovertemplate=(
+        "<b>%{label}</b><br>"
+        "총 관객: %{value:,}명"
+        "<extra></extra>"
     )
-
-    fig2.update_traces(
-        hovertemplate=(
-            "<b>%{label}</b>"
-            "<br>총 관객: %{value:,.0f}명"
-            "<extra></extra>"
-        )
-    )
-
-    st.plotly_chart(
-        fig2,
-        use_container_width=True
-    )
-
-else:
-
-    st.warning(
-        "장르 데이터를 가져오지 못했습니다."
-    )
-
-
-# =========================================================
-# 3. 총 관객수 히스토그램
-# =========================================================
-
-st.subheader("3. 총 관객수 분포")
-
-fig3, ax3 = plt.subplots(
-    figsize=(10, 5)
 )
 
-ax3.hist(
-    df["total_audi"],
-    bins=20,
-    edgecolor="black"
-)
-
-ax3.set_title(
-    "영화별 총 관객수 분포"
-)
-
-ax3.set_xlabel(
-    "총 관객수"
-)
-
-ax3.set_ylabel(
-    "영화 수"
-)
-
-plt.tight_layout()
-
-st.pyplot(fig3)
-
-
-# =========================================================
-# 히스토그램 분석 문구
-# =========================================================
-
-counts, bins = np.histogram(
-    df["total_audi"],
-    bins=20
-)
-
-most_common_bin = np.argmax(
-    counts
-)
-
-low = bins[most_common_bin]
-high = bins[most_common_bin + 1]
-
-
-# 가장 관객이 많은 영화
-max_index = df["total_audi"].idxmax()
-
-max_movie = df.loc[
-    max_index,
-    "movieNm"
-]
-
-max_audience = df.loc[
-    max_index,
-    "total_audi"
-]
-
-
-st.markdown(
-    f"""
-📊 **대부분의 영화는 약 {low:,.0f}명 ~ {high:,.0f}명 구간에 몰려 있습니다.**
-
-🏆 **가장 관객이 많은 영화는 '{max_movie}'이며,
-총 관객은 {max_audience:,.0f}명입니다.**
-"""
-)
-
-
-# =========================================================
-# 데이터 확인
-# =========================================================
-
-st.subheader("📋 박스오피스 데이터")
-
-display_columns = [
-    "rank",
-    "movieNm",
-    "audiCnt",
-    "total_audi",
-    "scrnCnt",
-    "showCnt"
-]
-
-display_columns = [
-    column
-    for column in display_columns
-    if column in df.columns
-]
-
-st.dataframe(
-    df[display_columns],
+st.plotly_chart(
+    fig2,
     use_container_width=True
 )
+
+# ===================================
+# 3. 총 관객 수 히스토그램
+# ===================================
+st.subheader("③ 총 관객 수 분포")
+
+hist_data = df.dropna(
+    subset=["total_audi"]
+).copy()
+
+fig3 = px.histogram(
+    hist_data,
+    x="total_audi",
+    nbins=10,
+    title="영화별 총 관객 수 분포",
+    labels={
+        "total_audi": "총 관객 수",
+        "count": "영화 수"
+    }
+)
+
+fig3.update_layout(
+    bargap=0.05
+)
+
+st.plotly_chart(
+    fig3,
+    use_container_width=True
+)
+
+# -----------------------------------
+# 가장 많이 몰려 있는 구간 계산
+# -----------------------------------
+if len(hist_data) > 0:
+
+    counts, bins = np.histogram(
+        hist_data["total_audi"],
+        bins=10
+    )
+
+    max_bin = counts.argmax()
+
+    low = bins[max_bin]
+    high = bins[max_bin + 1]
+
+    st.write(
+        f"📊 **대부분의 영화는 "
+        f"{low:,.0f}명 ~ {high:,.0f}명 "
+        f"구간에 몰려 있습니다.**"
+    )
+
+    # -----------------------------------
+    # 가장 관객이 많은 영화
+    # -----------------------------------
+    max_movie = hist_data.loc[
+        hist_data["total_audi"].idxmax()
+    ]
+
+    st.write(
+        f"🎬 **총 관객이 가장 많은 영화는 "
+        f"{max_movie['movieNm']}**이며, "
+        f"총 관객 수는 "
+        f"**{max_movie['total_audi']:,.0f}명**입니다."
+    )
