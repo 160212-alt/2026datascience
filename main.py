@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import numpy as np
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -29,14 +30,24 @@ except Exception:
 
 
 # =========================================
-# KOBIS 일별 박스오피스 API 함수
+# API 주소
+# =========================================
+BOXOFFICE_URL = (
+    "https://kobis.or.kr/kobisopenapi/webservice/rest/"
+    "boxoffice/searchDailyBoxOfficeList.json"
+)
+
+MOVIE_INFO_URL = (
+    "https://kobis.or.kr/kobisopenapi/webservice/rest/"
+    "movie/searchMovieInfo.json"
+)
+
+
+# =========================================
+# 일별 박스오피스 데이터 함수
 # =========================================
 @st.cache_data(ttl=3600)
 def get_daily_boxoffice(target_dt):
-    url = (
-        "https://kobis.or.kr/kobisopenapi/webservice/rest/"
-        "boxoffice/searchDailyBoxOfficeList.json"
-    )
 
     params = {
         "key": KOBIS_KEY,
@@ -44,7 +55,7 @@ def get_daily_boxoffice(target_dt):
     }
 
     response = requests.get(
-        url,
+        BOXOFFICE_URL,
         params=params,
         timeout=10
     )
@@ -61,14 +72,10 @@ def get_daily_boxoffice(target_dt):
 
 
 # =========================================
-# 영화 상세정보 API 함수
+# 영화 상세정보 함수
 # =========================================
 @st.cache_data(ttl=3600)
 def get_movie_info(movie_cd):
-    url = (
-        "https://kobis.or.kr/kobisopenapi/webservice/rest/"
-        "movie/searchMovieInfo.json"
-    )
 
     params = {
         "key": KOBIS_KEY,
@@ -76,7 +83,7 @@ def get_movie_info(movie_cd):
     }
 
     response = requests.get(
-        url,
+        MOVIE_INFO_URL,
         params=params,
         timeout=10
     )
@@ -93,7 +100,7 @@ def get_movie_info(movie_cd):
 
 
 # =========================================
-# 한국 시간 기준 어제
+# 한국 시간 기준 어제 날짜
 # =========================================
 kst = ZoneInfo("Asia/Seoul")
 
@@ -111,15 +118,26 @@ st.write(
 # 어제 박스오피스 데이터 가져오기
 # =========================================
 try:
-    movies = get_daily_boxoffice(target_date)
 
-except Exception as e:
-    st.error("KOBIS API에서 영화 데이터를 불러오지 못했습니다.")
+    movies = get_daily_boxoffice(
+        target_date
+    )
+
+except Exception:
+
+    st.error(
+        "KOBIS API에서 영화 데이터를 불러오지 못했습니다."
+    )
+
     st.stop()
 
 
 if not movies:
-    st.warning("해당 날짜의 영화 데이터가 없습니다.")
+
+    st.warning(
+        "해당 날짜의 영화 데이터가 없습니다."
+    )
+
     st.stop()
 
 
@@ -154,7 +172,9 @@ for col in numeric_columns:
         )
 
 
+# =========================================
 # 총 관객 수
+# =========================================
 df["total_audi"] = pd.to_numeric(
     df["audiAcc"],
     errors="coerce"
@@ -162,7 +182,7 @@ df["total_audi"] = pd.to_numeric(
 
 
 # =========================================
-# 장르 / 개봉일 가져오기
+# 영화별 장르와 개봉일 가져오기
 # =========================================
 genre_list = []
 open_date_list = []
@@ -171,7 +191,9 @@ for movie_cd in df["movieCd"]:
 
     try:
 
-        movie_info = get_movie_info(movie_cd)
+        movie_info = get_movie_info(
+            movie_cd
+        )
 
         # -------------------------------
         # 장르
@@ -183,7 +205,10 @@ for movie_cd in df["movieCd"]:
 
         if genres:
 
-            genre_name = genres[0]["genreNm"]
+            genre_name = genres[0].get(
+                "genreNm",
+                "기타"
+            )
 
         else:
 
@@ -204,8 +229,13 @@ for movie_cd in df["movieCd"]:
         open_date = ""
 
 
-    genre_list.append(genre_name)
-    open_date_list.append(open_date)
+    genre_list.append(
+        genre_name
+    )
+
+    open_date_list.append(
+        open_date
+    )
 
 
 df["genre"] = genre_list
@@ -216,23 +246,30 @@ df["openDt"] = open_date_list
 # 개봉일 스크린 수 구하기
 # =========================================
 @st.cache_data(ttl=3600)
-def get_first_screen(movie_cd, open_dt):
+def get_first_screen(
+    movie_cd,
+    open_dt
+):
 
     if not open_dt:
         return np.nan
 
-    if len(str(open_dt)) != 8:
+    open_dt = str(open_dt)
+
+    if len(open_dt) != 8:
         return np.nan
 
     try:
 
         opening_movies = get_daily_boxoffice(
-            str(open_dt)
+            open_dt
         )
 
         for movie in opening_movies:
 
-            if movie.get("movieCd") == movie_cd:
+            if movie.get(
+                "movieCd"
+            ) == movie_cd:
 
                 return pd.to_numeric(
                     movie.get("scrnCnt"),
@@ -266,12 +303,16 @@ df["first_scrn"] = first_screen_list
 # ============================================================
 # ① 영화별 총 관객 수 TOP 10
 # ============================================================
-st.subheader("① 영화별 총 관객 수 TOP 10")
+st.subheader(
+    "① 영화별 총 관객 수 TOP 10"
+)
 
 
 top10 = (
     df
-    .dropna(subset=["total_audi"])
+    .dropna(
+        subset=["total_audi"]
+    )
     .sort_values(
         "total_audi",
         ascending=False
@@ -313,16 +354,22 @@ st.plotly_chart(
 # ============================================================
 # ② 장르 × 영화 트리맵
 # ============================================================
-st.subheader("② 장르별 영화 총 관객 수")
+st.subheader(
+    "② 장르별 영화 총 관객 수"
+)
 
 
-treemap_data = df.dropna(
-    subset=[
-        "genre",
-        "movieNm",
-        "total_audi"
-    ]
-).copy()
+treemap_data = (
+    df
+    .dropna(
+        subset=[
+            "genre",
+            "movieNm",
+            "total_audi"
+        ]
+    )
+    .copy()
+)
 
 
 fig2 = px.treemap(
@@ -354,12 +401,18 @@ st.plotly_chart(
 # ============================================================
 # ③ 총 관객 수 히스토그램
 # ============================================================
-st.subheader("③ 총 관객 수 분포")
+st.subheader(
+    "③ 총 관객 수 분포"
+)
 
 
-hist_data = df.dropna(
-    subset=["total_audi"]
-).copy()
+hist_data = (
+    df
+    .dropna(
+        subset=["total_audi"]
+    )
+    .copy()
+)
 
 
 fig3 = px.histogram(
@@ -385,9 +438,9 @@ st.plotly_chart(
 )
 
 
-# -------------------------------
+# -----------------------------------------
 # 가장 많이 몰려 있는 구간
-# -------------------------------
+# -----------------------------------------
 if len(hist_data) > 0:
 
     counts, bins = np.histogram(
@@ -407,9 +460,9 @@ if len(hist_data) > 0:
     )
 
 
-    # -------------------------------
+    # -----------------------------------------
     # 총 관객이 가장 많은 영화
-    # -------------------------------
+    # -----------------------------------------
     max_movie = hist_data.loc[
         hist_data["total_audi"].idxmax()
     ]
@@ -424,21 +477,25 @@ if len(hist_data) > 0:
 
 
 # ============================================================
-# ④ 개봉일 스크린 수 vs 총 관객 수
+# ④ 개봉일 스크린 수와 총 관객 수의 관계
 # ============================================================
 st.subheader(
     "④ 개봉일 스크린 수와 총 관객 수의 관계"
 )
 
 
-scatter_data = df.dropna(
-    subset=[
-        "first_scrn",
-        "total_audi",
-        "movieNm",
-        "genre"
-    ]
-).copy()
+scatter_data = (
+    df
+    .dropna(
+        subset=[
+            "first_scrn",
+            "total_audi",
+            "movieNm",
+            "genre"
+        ]
+    )
+    .copy()
+)
 
 
 if len(scatter_data) > 0:
@@ -476,6 +533,12 @@ if len(scatter_data) > 0:
         use_container_width=True
     )
 
+
+    st.write(
+        "💡 각 점은 하나의 영화를 나타냅니다. "
+        "점에 마우스를 올리면 영화명이 표시됩니다."
+    )
+
 else:
 
     st.info(
@@ -493,7 +556,7 @@ st.subheader(
 
 
 # -----------------------------------------
-# 장르별 영화 개수 계산
+# 장르별 영화 수 계산
 # -----------------------------------------
 genre_counts = (
     df["genre"]
@@ -509,33 +572,50 @@ valid_genres = genre_counts[
 ].index.tolist()
 
 
-box_data = df[
-    df["genre"].isin(valid_genres)
-].dropna(
-    subset=[
-        "genre",
-        "total_audi",
-        "movieNm"
+box_data = (
+    df[
+        df["genre"].isin(
+            valid_genres
+        )
     ]
-).copy()
+    .dropna(
+        subset=[
+            "genre",
+            "total_audi",
+            "movieNm"
+        ]
+    )
+    .copy()
+)
 
 
+# -----------------------------------------
+# 조건을 만족하는 장르가 없는 경우
+# -----------------------------------------
 if len(valid_genres) == 0:
 
     st.info(
-        "현재 조회된 데이터에서는 "
+        "현재 조회된 영화 데이터에는 "
         "영화가 10편 이상인 장르가 없습니다."
     )
 
 else:
 
+    # -----------------------------------------
+    # 박스플롯
+    # -----------------------------------------
     fig5 = px.box(
         box_data,
         x="genre",
         y="total_audi",
         points="outliers",
-        custom_data=["movieNm"],
-        title="영화가 10편 이상인 장르별 총 관객 수",
+        custom_data=[
+            "movieNm"
+        ],
+        title=(
+            "영화가 10편 이상인 장르별 "
+            "총 관객 수"
+        ),
         labels={
             "genre": "장르",
             "total_audi": "총 관객 수"
@@ -544,7 +624,7 @@ else:
 
 
     # -----------------------------------------
-    # 이상치에 마우스를 올리면 영화명 표시
+    # 이상치 마우스오버
     # -----------------------------------------
     fig5.update_traces(
         hovertemplate=(
@@ -569,7 +649,13 @@ else:
 
 
     st.write(
-        "📊 영화가 10편 이상인 장르만 표시했습니다. "
-        "상자 밖의 점은 해당 장르에서 관객 수가 "
-        "특히 높거나 낮은 이상치입니다."
+        "📊 영화가 10편 이상인 장르만 "
+        "표시했습니다."
+    )
+
+    st.write(
+        "🔎 상자 밖으로 튀어나온 점은 "
+        "해당 장르에서 관객 수가 "
+        "특히 높거나 낮은 이상치입니다. "
+        "점에 마우스를 올리면 영화명이 표시됩니다."
     )
