@@ -170,13 +170,14 @@ df["movieNm"] = df[
 
 
 # ============================================================
-# 영화별 장르 가져오기
+# 영화별 장르 + 제작 국가 가져오기
 # ============================================================
 
 @st.cache_data(ttl=3600)
-def get_movie_genres(movie_codes):
+def get_movie_information(movie_codes):
 
     genre_dict = {}
+    nation_dict = {}
 
     detail_url = (
         "https://www.kobis.or.kr/"
@@ -207,6 +208,11 @@ def get_movie_genres(movie_codes):
                 .get("movieInfo", {})
             )
 
+
+            # ------------------------------------------------
+            # 장르
+            # ------------------------------------------------
+
             genres = movie_info.get(
                 "genres",
                 []
@@ -215,7 +221,7 @@ def get_movie_genres(movie_codes):
             if genres:
 
                 genre_dict[movie_code] = ", ".join(
-                    genre["genreNm"]
+                    genre.get("genreNm", "기타")
                     for genre in genres
                 )
 
@@ -223,15 +229,39 @@ def get_movie_genres(movie_codes):
 
                 genre_dict[movie_code] = "기타"
 
+
+            # ------------------------------------------------
+            # 제작 국가
+            # ------------------------------------------------
+
+            nations = movie_info.get(
+                "nations",
+                []
+            )
+
+            if nations:
+
+                nation_dict[movie_code] = ", ".join(
+                    nation.get("nationNm", "기타")
+                    for nation in nations
+                )
+
+            else:
+
+                nation_dict[movie_code] = "기타"
+
+
         except Exception:
 
             genre_dict[movie_code] = "기타"
+            nation_dict[movie_code] = "기타"
 
-    return genre_dict
+
+    return genre_dict, nation_dict
 
 
 # ============================================================
-# 장르 데이터 추가
+# 영화 정보 추가
 # ============================================================
 
 movie_codes = tuple(
@@ -240,9 +270,13 @@ movie_codes = tuple(
     .tolist()
 )
 
-genre_dict = get_movie_genres(
+
+genre_dict, nation_dict = get_movie_information(
     movie_codes
 )
+
+
+# 장르
 
 df["genre"] = df[
     "movieCd"
@@ -252,6 +286,21 @@ df["genre"] = df[
 
 df["genre"] = df[
     "genre"
+].fillna(
+    "기타"
+)
+
+
+# 제작 국가
+
+df["nation"] = df[
+    "movieCd"
+].map(
+    nation_dict
+)
+
+df["nation"] = df[
+    "nation"
 ].fillna(
     "기타"
 )
@@ -553,7 +602,7 @@ else:
 
 # ============================================================
 # ⑤ 장르별 총 관객 수 상자 그림
-#    ★ 영화가 10편 이하인 장르만
+#    영화가 10편 이하인 장르만
 # ============================================================
 
 st.subheader(
@@ -567,7 +616,6 @@ genre_counts = (
 )
 
 
-# ★ 10편 이하인 장르만 선택
 valid_genres = genre_counts[
     genre_counts <= 10
 ].index.tolist()
@@ -652,10 +700,6 @@ st.subheader(
 )
 
 
-# ------------------------------------------------------------
-# first_week_audi 컬럼 존재 여부 확인
-# ------------------------------------------------------------
-
 if "first_week_audi" in df.columns:
 
     bubble_data = df.dropna(
@@ -668,7 +712,6 @@ if "first_week_audi" in df.columns:
     ).copy()
 
 
-    # 첫 주 관객 수가 0보다 큰 데이터만 사용
     bubble_data = bubble_data[
         bubble_data["first_week_audi"] > 0
     ]
@@ -738,4 +781,105 @@ else:
         "first_week_audi(첫 주 관객) 항목이 없습니다. "
         "첫 주 관객 데이터가 포함된 누적 데이터를 사용하면 "
         "⑥ 버블 그래프를 만들 수 있습니다."
+    )
+
+
+# ============================================================
+# ⑦ 제작 국가 → 장르 선버스트 그래프
+#    칸의 크기 = 영화 편수
+# ============================================================
+
+st.subheader(
+    "⑦ 제작 국가 → 장르 선버스트 그래프"
+)
+
+
+sunburst_data = df.dropna(
+    subset=[
+        "nation",
+        "genre",
+        "movieNm"
+    ]
+).copy()
+
+
+# ------------------------------------------------------------
+# 국가와 장르가 비어 있는 경우 정리
+# ------------------------------------------------------------
+
+sunburst_data["nation"] = (
+    sunburst_data["nation"]
+    .replace("", "기타")
+    .fillna("기타")
+)
+
+
+sunburst_data["genre"] = (
+    sunburst_data["genre"]
+    .replace("", "기타")
+    .fillna("기타")
+)
+
+
+if len(sunburst_data) > 0:
+
+    # --------------------------------------------------------
+    # 여러 국가 / 여러 장르가 들어 있는 경우
+    # 하나의 영화가 중복 집계되지 않도록 행 단위로 사용
+    # --------------------------------------------------------
+
+    sunburst_data["movie_count"] = 1
+
+
+    fig7 = px.sunburst(
+        sunburst_data,
+        path=[
+            "nation",
+            "genre"
+        ],
+        values="movie_count",
+        title="제작 국가별 장르 영화 편수",
+        labels={
+            "nation": "제작 국가",
+            "genre": "장르",
+            "movie_count": "영화 편수"
+        }
+    )
+
+
+    fig7.update_traces(
+        hovertemplate=(
+            "<b>%{label}</b><br>"
+            "영화 편수: %{value}편"
+            "<extra></extra>"
+        )
+    )
+
+
+    fig7.update_layout(
+        margin=dict(
+            t=60,
+            l=10,
+            r=10,
+            b=10
+        )
+    )
+
+
+    st.plotly_chart(
+        fig7,
+        use_container_width=True
+    )
+
+
+    st.write(
+        "💡 안쪽은 제작 국가, 바깥쪽은 장르를 나타냅니다. "
+        "각 칸의 크기가 클수록 해당 영화가 많은 것입니다."
+    )
+
+
+else:
+
+    st.warning(
+        "선버스트 그래프를 만들 데이터가 없습니다."
     )
