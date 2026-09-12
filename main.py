@@ -1,282 +1,207 @@
 import streamlit as st
+import requests
 import pandas as pd
-import plotly.express as px
+import matplotlib.pyplot as plt
+import numpy as np
+from datetime import datetime, timedelta, timezone
 
-
-# ==================================================
-# 페이지 설정
-# ==================================================
-
+# --------------------------------------------------
+# 기본 설정
+# --------------------------------------------------
 st.set_page_config(
-    page_title="영화 데이터 그래프 도감 2 - 분포와 관계",
-    page_icon="🎬",
+    page_title="영화 데이터 그래프 도감",
     layout="wide"
 )
 
+st.title("🎬 영화 데이터 그래프 도감")
 
-# ==================================================
-# 제목
-# ==================================================
+# --------------------------------------------------
+# KOBIS API 설정
+# --------------------------------------------------
+API_KEY = st.secrets["KOBIS_KEY"]
 
-st.title("영화 데이터 그래프 도감 2 - 분포와 관계")
+KST = timezone(timedelta(hours=9))
+yesterday = (datetime.now(KST) - timedelta(days=1)).strftime("%Y%m%d")
 
-st.write(
-    "1년간 박스오피스 10위권에 든 영화 가운데 "
-    "해당 기간에 개봉한 216편의 데이터를 이용해 "
-    "영화의 분포와 관계를 살펴봅니다."
+url = (
+    "https://kobis.or.kr/kobisopenapi/webservice/rest/"
+    "boxoffice/searchDailyBoxOfficeList.json"
 )
 
+params = {
+    "key": API_KEY,
+    "targetDt": yesterday
+}
 
-# ==================================================
-# 데이터 불러오기
-# ==================================================
-
-DATA_URL = (
-    "https://raw.githubusercontent.com/greatsong/modudata/"
-    "main/data/kobis_movies.csv"
-)
-
-
-@st.cache_data
-def load_data():
-
-    df = pd.read_csv(DATA_URL)
-
-    # 개봉일
-    df["openDt"] = (
-        df["openDt"]
-        .astype(str)
-        .str.zfill(8)
-    )
-
-    # 여러 장르가 | 로 나뉘어 있으면 첫 번째 장르만 사용
-    df["genre"] = (
-        df["genre"]
-        .fillna("기타")
-        .astype(str)
-        .str.split("|")
-        .str[0]
-        .str.strip()
-    )
-
-    # 영화 이름
-    df["movieNm"] = (
-        df["movieNm"]
-        .fillna("제목 없음")
-        .astype(str)
-        .str.strip()
-    )
-
-    # 총 관객 수를 숫자로 변환
-    df["total_audi"] = pd.to_numeric(
-        df["total_audi"],
-        errors="coerce"
-    )
-
-    return df
-
-
-# ==================================================
-# 앱 실행
-# ==================================================
-
+# --------------------------------------------------
+# API 호출
+# --------------------------------------------------
 try:
+    response = requests.get(url, params=params)
+    response.raise_for_status()
 
-    df = load_data()
+    data = response.json()
 
-    st.success(
-        f"총 {len(df)}편의 영화 데이터를 불러왔습니다."
-    )
+    movie_list = data["boxOfficeResult"]["dailyBoxOfficeList"]
 
+    if not movie_list:
+        st.warning("어제의 영화 데이터가 없습니다.")
+        st.stop()
 
-    # ==================================================
-    # ① 장르별 영화 편수
-    # ==================================================
-
-    st.subheader("① 장르별 영화 편수")
-
-    genre_count = (
-        df["genre"]
-        .value_counts()
-        .reset_index()
-    )
-
-    genre_count.columns = [
-        "장르",
-        "영화 편수"
-    ]
-
-    fig1 = px.pie(
-        genre_count,
-        names="장르",
-        values="영화 편수",
-        hole=0.45,
-        title="장르별 영화 편수"
-    )
-
-    fig1.update_traces(
-        textposition="inside",
-        textinfo="percent",
-        hovertemplate=(
-            "<b>%{label}</b><br>"
-            "영화 편수: %{value}편<br>"
-            "비율: %{percent}"
-            "<extra></extra>"
-        )
-    )
-
-    fig1.update_layout(
-        height=500,
-        legend_title="장르"
-    )
-
-    st.plotly_chart(
-        fig1,
-        use_container_width=True
-    )
-
-
-    # --------------------------------------------------
-    # ① 그래프 분석
-    # --------------------------------------------------
-
-    st.markdown("---")
-
-    st.markdown(
-        "### 💡 이 그래프로 알 수 있는 것"
-    )
-
-    st.info(
-        "장르별 영화 편수를 비교하면 1년간 박스오피스 "
-        "10위권에 진입한 영화 중 어떤 장르의 영화가 "
-        "상대적으로 많이 나타났는지 알 수 있다."
-    )
-
-
-    # ==================================================
-    # ② 장르별 영화 트리맵
-    # ==================================================
-
-    st.markdown("---")
-
-    st.subheader("② 장르별 영화 트리맵")
-
-    # ----------------------------------------------
-    # 트리맵용 데이터 만들기
-    # ----------------------------------------------
-
-    treemap_df = df[
-        ["genre", "movieNm", "total_audi"]
-    ].copy()
-
-    # 총 관객 수가 없는 행 제거
-    treemap_df = treemap_df.dropna(
-        subset=["total_audi"]
-    )
-
-    # 장르와 영화 제목이 비어 있는 행 제거
-    treemap_df = treemap_df[
-        treemap_df["genre"].notna()
-        & treemap_df["movieNm"].notna()
-    ]
-
-    # 문자열로 변환
-    treemap_df["genre"] = (
-        treemap_df["genre"]
-        .astype(str)
-        .str.strip()
-    )
-
-    treemap_df["movieNm"] = (
-        treemap_df["movieNm"]
-        .astype(str)
-        .str.strip()
-    )
-
-    # 빈 문자열 제거
-    treemap_df = treemap_df[
-        (treemap_df["genre"] != "")
-        & (treemap_df["movieNm"] != "")
-    ]
-
-    # 관객 수가 0보다 큰 데이터만 사용
-    treemap_df = treemap_df[
-        treemap_df["total_audi"] > 0
-    ]
-
-    # ----------------------------------------------
-    # 같은 장르 + 같은 영화가 여러 번 있으면 합치기
-    # ----------------------------------------------
-
-    treemap_df = (
-        treemap_df
-        .groupby(
-            ["genre", "movieNm"],
-            as_index=False
-        )["total_audi"]
-        .sum()
-    )
-
-    # ----------------------------------------------
-    # 트리맵 생성
-    # ----------------------------------------------
-
-    fig2 = px.treemap(
-        treemap_df,
-        path=["genre", "movieNm"],
-        values="total_audi",
-        title="장르 안의 영화별 총 관객",
-        custom_data=[
-            "genre",
-            "movieNm",
-            "total_audi"
-        ]
-    )
-
-    fig2.update_traces(
-        hovertemplate=(
-            "<b>%{customdata[1]}</b><br>"
-            "장르: %{customdata[0]}<br>"
-            "총 관객: %{customdata[2]:,}명"
-            "<extra></extra>"
-        )
-    )
-
-    fig2.update_layout(
-        height=700
-    )
-
-    st.plotly_chart(
-        fig2,
-        use_container_width=True
-    )
-
-
-    # --------------------------------------------------
-    # ② 그래프 분석
-    # --------------------------------------------------
-
-    st.markdown("---")
-
-    st.markdown(
-        "### 💡 이 그래프로 알 수 있는 것"
-    )
-
-    st.info(
-        "각 장르 안에서 영화별 총 관객 규모를 비교하면 "
-        "어떤 장르의 어떤 영화가 많은 관객을 확보했는지 "
-        "한눈에 확인할 수 있다."
-    )
-
-
-# ==================================================
-# 오류 처리
-# ==================================================
+    df = pd.DataFrame(movie_list)
 
 except Exception as e:
+    st.error(f"API 데이터를 불러오는 중 오류가 발생했습니다: {e}")
+    st.stop()
 
-    st.error(
-        "데이터를 불러오는 중 오류가 발생했습니다."
-    )
+# --------------------------------------------------
+# 숫자 데이터 변환
+# --------------------------------------------------
+numeric_columns = [
+    "rank",
+    "rankInten",
+    "salesAmt",
+    "salesShare",
+    "salesInten",
+    "salesChange",
+    "salesAcc",
+    "audiCnt",
+    "audiInten",
+    "audiChange",
+    "audiAcc",
+    "scrnCnt",
+    "showCnt"
+]
 
-    st.exception(e)
+for col in numeric_columns:
+    if col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+# 총 관객수
+df["total_audi"] = df["audiAcc"]
+
+# 결측값 제거
+df = df.dropna(subset=["total_audi"])
+
+# --------------------------------------------------
+# 1. 일별 관객수 TOP 5
+# --------------------------------------------------
+st.subheader("1. 관객수 TOP 5 영화")
+
+top5 = df.sort_values(
+    by="audiCnt",
+    ascending=False
+).head(5)
+
+fig1, ax1 = plt.subplots(figsize=(10, 5))
+
+ax1.bar(
+    top5["movieNm"],
+    top5["audiCnt"]
+)
+
+ax1.set_xlabel("영화")
+ax1.set_ylabel("일 관객수")
+ax1.set_title("어제 관객수 TOP 5")
+
+plt.xticks(rotation=20)
+
+st.pyplot(fig1)
+
+# --------------------------------------------------
+# 2. 영화별 총 관객수
+# --------------------------------------------------
+st.subheader("2. 영화별 총 관객수")
+
+fig2, ax2 = plt.subplots(figsize=(10, 5))
+
+sorted_df = df.sort_values(
+    by="total_audi",
+    ascending=False
+)
+
+ax2.bar(
+    sorted_df["movieNm"],
+    sorted_df["total_audi"]
+)
+
+ax2.set_xlabel("영화")
+ax2.set_ylabel("총 관객수")
+ax2.set_title("영화별 총 관객수")
+
+plt.xticks(rotation=45, ha="right")
+
+st.pyplot(fig2)
+
+# --------------------------------------------------
+# 3. 총 관객수 히스토그램
+# --------------------------------------------------
+st.subheader("3. 영화별 총 관객수 분포")
+
+fig3, ax3 = plt.subplots(figsize=(10, 5))
+
+ax3.hist(
+    df["total_audi"],
+    bins=20,
+    edgecolor="black"
+)
+
+ax3.set_xlabel("총 관객수")
+ax3.set_ylabel("영화 수")
+ax3.set_title("영화별 총 관객수 히스토그램")
+
+st.pyplot(fig3)
+
+# --------------------------------------------------
+# 히스토그램 분석
+# --------------------------------------------------
+counts, bins = np.histogram(
+    df["total_audi"],
+    bins=20
+)
+
+max_bin_index = np.argmax(counts)
+
+low = bins[max_bin_index]
+high = bins[max_bin_index + 1]
+
+# 가장 관객이 많은 영화
+max_index = df["total_audi"].idxmax()
+
+max_movie = df.loc[max_index, "movieNm"]
+max_audience = df.loc[max_index, "total_audi"]
+
+st.write(
+    f"📊 **대부분의 영화는 약 "
+    f"{low:,.0f}명 ~ {high:,.0f}명 구간에 몰려 있습니다.**"
+)
+
+st.write(
+    f"🏆 **가장 관객이 많은 영화는 "
+    f"'{max_movie}'로, 총 관객은 "
+    f"{max_audience:,.0f}명입니다.**"
+)
+
+# --------------------------------------------------
+# 데이터 표
+# --------------------------------------------------
+st.subheader("📋 영화 데이터")
+
+show_columns = [
+    "rank",
+    "movieNm",
+    "audiCnt",
+    "total_audi",
+    "scrnCnt",
+    "showCnt"
+]
+
+show_columns = [
+    col for col in show_columns
+    if col in df.columns
+]
+
+st.dataframe(
+    df[show_columns],
+    use_container_width=True
+)
