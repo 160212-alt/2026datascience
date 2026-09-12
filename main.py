@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 import requests
 from datetime import datetime, timedelta
-from collections import defaultdict
+
 
 # ============================================================
 # 기본 설정
@@ -16,8 +16,9 @@ st.set_page_config(
 
 st.title("🎬 영화 데이터 그래프 도감")
 
+
 # ============================================================
-# KOBIS API 설정
+# KOBIS API KEY
 # ============================================================
 
 try:
@@ -28,27 +29,30 @@ except Exception:
 
 
 # ============================================================
-# 어제 날짜 계산
+# 어제 날짜
 # ============================================================
 
 yesterday = datetime.now() - timedelta(days=1)
+
 target_date = yesterday.strftime("%Y%m%d")
+
+display_date = yesterday.strftime("%Y-%m-%d")
+
+st.caption(f"📅 기준 날짜: {display_date}")
 
 
 # ============================================================
 # KOBIS 일일 박스오피스 API
 # ============================================================
 
-url = "https://www.kobis.or.kr/kobisopenapi/webservice/rest/boxoffice/searchDailyBoxOfficeList.json"
-
-params = {
-    "key": KOBIS_KEY,
-    "targetDt": target_date
-}
-
-
 @st.cache_data(ttl=3600)
 def get_boxoffice_data(target_date):
+
+    url = (
+        "https://www.kobis.or.kr/"
+        "kobisopenapi/webservice/rest/boxoffice/"
+        "searchDailyBoxOfficeList.json"
+    )
 
     params = {
         "key": KOBIS_KEY,
@@ -65,11 +69,15 @@ def get_boxoffice_data(target_date):
 
     data = response.json()
 
-    return data["boxOfficeResult"]["dailyBoxOfficeList"]
+    return (
+        data
+        .get("boxOfficeResult", {})
+        .get("dailyBoxOfficeList", [])
+    )
 
 
 # ============================================================
-# 데이터 가져오기
+# 데이터 불러오기
 # ============================================================
 
 try:
@@ -79,24 +87,32 @@ try:
 except Exception as e:
 
     st.error(
-        "영화 데이터를 불러오는 중 오류가 발생했습니다."
+        f"영화 데이터를 불러오는 중 오류가 발생했습니다.\n\n{e}"
+    )
+
+    st.stop()
+
+
+if not movies:
+
+    st.warning(
+        "해당 날짜의 영화 데이터가 없습니다."
     )
 
     st.stop()
 
 
 # ============================================================
-# 기본 데이터프레임
+# 데이터프레임
 # ============================================================
 
 df = pd.DataFrame(movies)
 
 
 # ============================================================
-# 필요한 컬럼 정리
+# 숫자형 컬럼 변환
 # ============================================================
 
-# 숫자형 컬럼
 numeric_columns = [
     "rank",
     "rankInten",
@@ -124,7 +140,26 @@ for col in numeric_columns:
 
 
 # ============================================================
-# 장르 데이터 가져오기
+# total_audi 생성
+# ============================================================
+
+df["total_audi"] = pd.to_numeric(
+    df["audiAcc"],
+    errors="coerce"
+)
+
+
+# ============================================================
+# 영화명 정리
+# ============================================================
+
+df["movieNm"] = df["movieNm"].fillna(
+    "영화명 없음"
+)
+
+
+# ============================================================
+# 장르 정보 가져오기
 # ============================================================
 
 @st.cache_data(ttl=3600)
@@ -153,6 +188,8 @@ def get_movie_genres(movie_list):
                 timeout=10
             )
 
+            response.raise_for_status()
+
             data = response.json()
 
             movie_info = (
@@ -169,7 +206,8 @@ def get_movie_genres(movie_list):
             if genres:
 
                 genre_dict[movie_code] = ", ".join(
-                    [g["genreNm"] for g in genres]
+                    genre["genreNm"]
+                    for genre in genres
                 )
 
             else:
@@ -193,46 +231,13 @@ df["genre"] = df["movieCd"].map(
     genre_dict
 )
 
-df["genre"] = df["genre"].fillna("기타")
-
-
-# ============================================================
-# total_audi 생성
-# ============================================================
-
-df["total_audi"] = pd.to_numeric(
-    df["audiAcc"],
-    errors="coerce"
+df["genre"] = df["genre"].fillna(
+    "기타"
 )
 
 
 # ============================================================
-# movieNm 정리
-# ============================================================
-
-df["movieNm"] = df["movieNm"].fillna(
-    "영화명 없음"
-)
-
-
-# ============================================================
-# 날짜
-# ============================================================
-
-display_date = (
-    datetime.strptime(
-        target_date,
-        "%Y%m%d"
-    ).strftime("%Y-%m-%d")
-)
-
-st.caption(
-    f"📅 기준 날짜: {display_date}"
-)
-
-
-# ============================================================
-# 원본 데이터 확인
+# 원본 데이터 보기
 # ============================================================
 
 with st.expander("📋 원본 데이터 보기"):
@@ -251,8 +256,19 @@ st.subheader(
     "① 일일 관객 수 TOP 10"
 )
 
+top10 = (
+    df
+    .sort_values(
+        "audiCnt",
+        ascending=False
+    )
+    .head(10)
+    .copy()
+)
+
+
 fig1 = px.bar(
-    df.head(10),
+    top10,
     x="movieNm",
     y="audiCnt",
     text="audiCnt",
@@ -262,6 +278,7 @@ fig1 = px.bar(
         "audiCnt": "일일 관객 수"
     }
 )
+
 
 fig1.update_traces(
     texttemplate="%{text:,}",
@@ -273,9 +290,11 @@ fig1.update_traces(
     )
 )
 
+
 fig1.update_layout(
     xaxis_tickangle=-45
 )
+
 
 st.plotly_chart(
     fig1,
@@ -290,6 +309,7 @@ st.plotly_chart(
 st.subheader(
     "② 장르별 영화 총 관객 트리맵"
 )
+
 
 tree_data = df.dropna(
     subset=[
@@ -316,8 +336,8 @@ if len(tree_data) > 0:
         ]
     )
 
-    fig2.update_traces(
 
+    fig2.update_traces(
         hovertemplate=(
             "<b>%{customdata[0]}</b><br>"
             "총 관객: %{customdata[1]:,}명"
@@ -325,11 +345,11 @@ if len(tree_data) > 0:
         )
     )
 
+
     st.plotly_chart(
         fig2,
         use_container_width=True
     )
-
 
 else:
 
@@ -345,6 +365,7 @@ else:
 st.subheader(
     "③ 총 관객 수 히스토그램"
 )
+
 
 hist_data = df.dropna(
     subset=[
@@ -366,6 +387,7 @@ if len(hist_data) > 0:
         }
     )
 
+
     fig3.update_traces(
         hovertemplate=(
             "총 관객 수: %{x:,}명<br>"
@@ -374,6 +396,7 @@ if len(hist_data) > 0:
         )
     )
 
+
     st.plotly_chart(
         fig3,
         use_container_width=True
@@ -381,7 +404,7 @@ if len(hist_data) > 0:
 
 
     # --------------------------------------------------------
-    # 대부분의 영화가 어느 구간에 몰려 있는지
+    # 가장 많이 몰린 구간
     # --------------------------------------------------------
 
     counts, bins = pd.cut(
@@ -390,13 +413,28 @@ if len(hist_data) > 0:
         retbins=True
     )
 
+
     bin_counts = (
         hist_data
-        .groupby(counts, observed=False)
+        .groupby(
+            counts,
+            observed=False
+        )
         .size()
     )
 
-    most_common_bin = bin_counts.idxmax()
+
+    if len(bin_counts) > 0:
+
+        most_common_bin = bin_counts.idxmax()
+
+        st.write(
+            f"💡 대부분의 영화는 "
+            f"**{most_common_bin.left:,.0f}명 ~ "
+            f"{most_common_bin.right:,.0f}명** 구간에 "
+            f"몰려 있습니다."
+        )
+
 
     # --------------------------------------------------------
     # 가장 관객이 많은 영화
@@ -406,12 +444,6 @@ if len(hist_data) > 0:
         hist_data["total_audi"].idxmax()
     ]
 
-    st.write(
-        f"💡 대부분의 영화는 "
-        f"**{most_common_bin.left:,.0f}명 ~ "
-        f"{most_common_bin.right:,.0f}명** 구간에 "
-        f"몰려 있습니다."
-    )
 
     st.write(
         f"🏆 총 관객이 가장 많은 영화는 "
@@ -436,22 +468,24 @@ st.subheader(
     "④ 월 × 요일별 일관객 합계 히트맵"
 )
 
-# ------------------------------------------------------------
-# 현재 API는 하루치 데이터이므로
-# 날짜를 기준으로 월/요일을 생성
-# ------------------------------------------------------------
 
 heat_data = df.copy()
 
+
+# 날짜 생성
 heat_data["date"] = pd.to_datetime(
     target_date,
     format="%Y%m%d"
 )
 
+
+# 월
 heat_data["month"] = (
     heat_data["date"].dt.month
 )
 
+
+# 요일 순서
 weekday_order = [
     "월요일",
     "화요일",
@@ -462,6 +496,7 @@ weekday_order = [
     "일요일"
 ]
 
+
 heat_data["weekday"] = (
     heat_data["date"]
     .dt.dayofweek
@@ -471,6 +506,7 @@ heat_data["weekday"] = (
         )
     )
 )
+
 
 # ------------------------------------------------------------
 # 월 × 요일별 일관객 합계
@@ -488,6 +524,7 @@ heatmap_data = (
     .sum()
 )
 
+
 heatmap_pivot = (
     heatmap_data
     .pivot(
@@ -497,9 +534,15 @@ heatmap_pivot = (
     )
 )
 
+
 heatmap_pivot = heatmap_pivot.reindex(
     columns=weekday_order
 )
+
+
+# ------------------------------------------------------------
+# 히트맵
+# ------------------------------------------------------------
 
 fig4 = px.imshow(
     heatmap_pivot,
@@ -513,6 +556,7 @@ fig4 = px.imshow(
     }
 )
 
+
 fig4.update_traces(
     hovertemplate=(
         "월: %{y}월<br>"
@@ -522,10 +566,12 @@ fig4.update_traces(
     )
 )
 
+
 st.plotly_chart(
     fig4,
     use_container_width=True
 )
+
 
 st.write(
     "💡 색이 진할수록 해당 월·요일의 "
@@ -542,9 +588,9 @@ st.subheader(
 )
 
 
-# -----------------------------------------
+# ------------------------------------------------------------
 # 장르별 영화 수 계산
-# -----------------------------------------
+# ------------------------------------------------------------
 
 genre_counts = (
     df["genre"]
@@ -552,46 +598,23 @@ genre_counts = (
 )
 
 
-# -----------------------------------------
-# 영화가 10편 이상인 장르 찾기
-# -----------------------------------------
+# ------------------------------------------------------------
+# 영화가 10편 이상인 장르만 선택
+# ------------------------------------------------------------
 
 valid_genres = genre_counts[
     genre_counts >= 10
 ].index.tolist()
 
 
-# -----------------------------------------
-# 10편 이상인 장르가 있으면 해당 장르만 사용
-# 없으면 전체 장르 사용
-# -----------------------------------------
+# ------------------------------------------------------------
+# 해당 장르의 데이터만 추출
+# ------------------------------------------------------------
 
-if len(valid_genres) > 0:
+box_data = df[
+    df["genre"].isin(valid_genres)
+].copy()
 
-    box_data = df[
-        df["genre"].isin(valid_genres)
-    ].copy()
-
-    box_title = (
-        "영화가 10편 이상인 장르별 총 관객 수"
-    )
-
-else:
-
-    # 어제 데이터는 영화 수가 적기 때문에
-    # 10편 이상인 장르가 없을 경우 전체 장르 사용
-
-    box_data = df.copy()
-
-    box_title = (
-        "장르별 총 관객 수 "
-        "(현재 데이터 기준)"
-    )
-
-
-# -----------------------------------------
-# 필요한 데이터만 남기기
-# -----------------------------------------
 
 box_data = box_data.dropna(
     subset=[
@@ -599,14 +622,14 @@ box_data = box_data.dropna(
         "total_audi",
         "movieNm"
     ]
-).copy()
+)
 
 
-# -----------------------------------------
-# 박스플롯 그리기
-# -----------------------------------------
+# ------------------------------------------------------------
+# 10편 이상인 장르가 존재할 경우
+# ------------------------------------------------------------
 
-if len(box_data) > 0:
+if len(valid_genres) > 0 and len(box_data) > 0:
 
     fig5 = px.box(
         box_data,
@@ -616,7 +639,7 @@ if len(box_data) > 0:
         custom_data=[
             "movieNm"
         ],
-        title=box_title,
+        title="영화가 10편 이상인 장르별 총 관객 수",
         labels={
             "genre": "장르",
             "total_audi": "총 관객 수"
@@ -624,10 +647,9 @@ if len(box_data) > 0:
     )
 
 
-    # -----------------------------------------
-    # 마우스를 이상치에 올렸을 때
-    # 영화명과 총 관객 수 표시
-    # -----------------------------------------
+    # --------------------------------------------------------
+    # 이상치에 마우스를 올렸을 때 영화명 표시
+    # --------------------------------------------------------
 
     fig5.update_traces(
         hovertemplate=(
@@ -651,28 +673,20 @@ if len(box_data) > 0:
     )
 
 
-    # -----------------------------------------
-    # 안내 문구
-    # -----------------------------------------
+    st.write(
+        "💡 영화가 10편 이상인 장르만 표시했습니다. "
+        "상자 밖의 점은 이상치이며, "
+        "점에 마우스를 올리면 영화명이 표시됩니다."
+    )
 
-    if len(valid_genres) == 0:
 
-        st.write(
-            "💡 현재 조회된 데이터에서는 "
-            "영화가 10편 이상인 장르가 없어 "
-            "전체 장르를 대상으로 상자 그림을 표시했습니다."
-        )
-
-    else:
-
-        st.write(
-            "💡 영화가 10편 이상인 장르만 표시했습니다. "
-            "상자 밖의 점은 이상치를 나타내며, "
-            "점에 마우스를 올리면 영화명이 표시됩니다."
-        )
+# ------------------------------------------------------------
+# 10편 이상인 장르가 없을 경우
+# ------------------------------------------------------------
 
 else:
 
-    st.warning(
-        "상자 그림을 만들 데이터가 없습니다."
+    st.info(
+        "현재 데이터에는 영화가 10편 이상인 장르가 없어 "
+        "상자 그림을 표시할 수 없습니다."
     )
