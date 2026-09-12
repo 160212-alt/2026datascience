@@ -23,8 +23,11 @@ st.title("🎬 영화 데이터 그래프 도감")
 
 try:
     KOBIS_KEY = st.secrets["KOBIS_KEY"]
+
 except Exception:
-    st.error("Streamlit Secrets에 KOBIS_KEY를 등록해주세요.")
+    st.error(
+        "Streamlit Secrets에 KOBIS_KEY를 등록해주세요."
+    )
     st.stop()
 
 
@@ -33,10 +36,14 @@ except Exception:
 # ============================================================
 
 yesterday = datetime.now() - timedelta(days=1)
+
 target_date = yesterday.strftime("%Y%m%d")
+
 display_date = yesterday.strftime("%Y-%m-%d")
 
-st.caption(f"📅 기준 날짜: {display_date}")
+st.caption(
+    f"📅 기준 날짜: {display_date}"
+)
 
 
 # ============================================================
@@ -79,7 +86,10 @@ def get_boxoffice_data(target_date):
 # ============================================================
 
 try:
-    movies = get_boxoffice_data(target_date)
+
+    movies = get_boxoffice_data(
+        target_date
+    )
 
 except Exception as e:
 
@@ -92,7 +102,10 @@ except Exception as e:
 
 if not movies:
 
-    st.warning("해당 날짜의 영화 데이터가 없습니다.")
+    st.warning(
+        "해당 날짜의 영화 데이터가 없습니다."
+    )
+
     st.stop()
 
 
@@ -100,7 +113,9 @@ if not movies:
 # 데이터프레임
 # ============================================================
 
-df = pd.DataFrame(movies)
+df = pd.DataFrame(
+    movies
+)
 
 
 # ============================================================
@@ -147,7 +162,9 @@ df["total_audi"] = pd.to_numeric(
 # 영화명 정리
 # ============================================================
 
-df["movieNm"] = df["movieNm"].fillna(
+df["movieNm"] = df[
+    "movieNm"
+].fillna(
     "영화명 없음"
 )
 
@@ -218,27 +235,47 @@ def get_movie_genres(movie_codes):
 # ============================================================
 
 movie_codes = tuple(
-    df["movieCd"].dropna().tolist()
+    df["movieCd"]
+    .dropna()
+    .tolist()
 )
 
 genre_dict = get_movie_genres(
     movie_codes
 )
 
-df["genre"] = df["movieCd"].map(
+df["genre"] = df[
+    "movieCd"
+].map(
     genre_dict
 )
 
-df["genre"] = df["genre"].fillna(
+df["genre"] = df[
+    "genre"
+].fillna(
     "기타"
 )
 
 
 # ============================================================
-# 원본 데이터
+# first_week_audi가 있으면 숫자로 변환
 # ============================================================
 
-with st.expander("📋 원본 데이터 보기"):
+if "first_week_audi" in df.columns:
+
+    df["first_week_audi"] = pd.to_numeric(
+        df["first_week_audi"],
+        errors="coerce"
+    )
+
+
+# ============================================================
+# 원본 데이터 보기
+# ============================================================
+
+with st.expander(
+    "📋 원본 데이터 보기"
+):
 
     st.dataframe(
         df,
@@ -250,7 +287,9 @@ with st.expander("📋 원본 데이터 보기"):
 # ① 일일 관객 수 TOP 10
 # ============================================================
 
-st.subheader("① 일일 관객 수 TOP 10")
+st.subheader(
+    "① 일일 관객 수 TOP 10"
+)
 
 top10 = (
     df
@@ -261,6 +300,7 @@ top10 = (
     .head(10)
     .copy()
 )
+
 
 fig1 = px.bar(
     top10,
@@ -274,6 +314,7 @@ fig1 = px.bar(
     }
 )
 
+
 fig1.update_traces(
     texttemplate="%{text:,}",
     textposition="outside",
@@ -284,9 +325,11 @@ fig1.update_traces(
     )
 )
 
+
 fig1.update_layout(
     xaxis_tickangle=-45
 )
+
 
 st.plotly_chart(
     fig1,
@@ -298,7 +341,9 @@ st.plotly_chart(
 # ② 장르별 영화 총 관객 트리맵
 # ============================================================
 
-st.subheader("② 장르별 영화 총 관객 트리맵")
+st.subheader(
+    "② 장르별 영화 총 관객 트리맵"
+)
 
 tree_data = df.dropna(
     subset=[
@@ -325,6 +370,7 @@ if len(tree_data) > 0:
         ]
     )
 
+
     fig2.update_traces(
         hovertemplate=(
             "<b>%{customdata[0]}</b><br>"
@@ -332,6 +378,7 @@ if len(tree_data) > 0:
             "<extra></extra>"
         )
     )
+
 
     st.plotly_chart(
         fig2,
@@ -349,7 +396,10 @@ else:
 # ③ 총 관객 수 히스토그램
 # ============================================================
 
-st.subheader("③ 총 관객 수 히스토그램")
+st.subheader(
+    "③ 총 관객 수 히스토그램"
+)
+
 
 hist_data = df.dropna(
     subset=[
@@ -371,6 +421,7 @@ if len(hist_data) > 0:
         }
     )
 
+
     fig3.update_traces(
         hovertemplate=(
             "총 관객 수: %{x:,}명<br>"
@@ -379,18 +430,23 @@ if len(hist_data) > 0:
         )
     )
 
+
     st.plotly_chart(
         fig3,
         use_container_width=True
     )
 
 
+    # --------------------------------------------------------
     # 가장 많이 몰린 구간
+    # --------------------------------------------------------
+
     counts, bins = pd.cut(
         hist_data["total_audi"],
         bins=10,
         retbins=True
     )
+
 
     bin_counts = (
         hist_data
@@ -401,9 +457,12 @@ if len(hist_data) > 0:
         .size()
     )
 
+
     if len(bin_counts) > 0:
 
-        most_common_bin = bin_counts.idxmax()
+        most_common_bin = (
+            bin_counts.idxmax()
+        )
 
         st.write(
             f"💡 대부분의 영화는 "
@@ -413,10 +472,14 @@ if len(hist_data) > 0:
         )
 
 
+    # --------------------------------------------------------
     # 가장 관객이 많은 영화
+    # --------------------------------------------------------
+
     max_movie = hist_data.loc[
         hist_data["total_audi"].idxmax()
     ]
+
 
     st.write(
         f"🏆 총 관객이 가장 많은 영화는 "
@@ -433,128 +496,87 @@ else:
 
 
 # ============================================================
-# ④ 월 × 요일별 일관객 합계 히트맵
+# ④ 일일 관객 수와 총 관객 수의 관계 산점도
 # ============================================================
 
-st.subheader("④ 월 × 요일별 일관객 합계 히트맵")
-
-heat_data = df.copy()
-
-heat_data["date"] = pd.to_datetime(
-    target_date,
-    format="%Y%m%d"
+st.subheader(
+    "④ 일일 관객 수와 총 관객 수의 관계"
 )
 
-heat_data["month"] = (
-    heat_data["date"].dt.month
-)
 
-weekday_order = [
-    "월요일",
-    "화요일",
-    "수요일",
-    "목요일",
-    "금요일",
-    "토요일",
-    "일요일"
-]
+scatter_data = df.dropna(
+    subset=[
+        "audiCnt",
+        "total_audi",
+        "movieNm"
+    ]
+).copy()
 
-heat_data["weekday"] = (
-    heat_data["date"]
-    .dt.dayofweek
-    .map(
-        dict(
-            enumerate(weekday_order)
+
+if len(scatter_data) > 0:
+
+    fig4 = px.scatter(
+        scatter_data,
+        x="audiCnt",
+        y="total_audi",
+        hover_name="movieNm",
+        title="일일 관객 수와 총 관객 수의 관계",
+        labels={
+            "audiCnt": "일일 관객 수",
+            "total_audi": "총 관객 수"
+        }
+    )
+
+
+    fig4.update_traces(
+        hovertemplate=(
+            "<b>%{hovertext}</b><br>"
+            "일일 관객: %{x:,}명<br>"
+            "총 관객: %{y:,}명"
+            "<extra></extra>"
         )
     )
-)
 
 
-heatmap_data = (
-    heat_data
-    .groupby(
-        [
-            "month",
-            "weekday"
-        ],
-        as_index=False
-    )["audiCnt"]
-    .sum()
-)
-
-
-heatmap_pivot = (
-    heatmap_data
-    .pivot(
-        index="month",
-        columns="weekday",
-        values="audiCnt"
+    st.plotly_chart(
+        fig4,
+        use_container_width=True
     )
-)
-
-heatmap_pivot = heatmap_pivot.reindex(
-    columns=weekday_order
-)
 
 
-fig4 = px.imshow(
-    heatmap_pivot,
-    text_auto=True,
-    aspect="auto",
-    title="월 × 요일별 일관객 합계",
-    labels={
-        "x": "요일",
-        "y": "월",
-        "color": "일관객 수"
-    }
-)
+else:
 
-fig4.update_traces(
-    hovertemplate=(
-        "월: %{y}월<br>"
-        "요일: %{x}<br>"
-        "일관객 합계: %{z:,}명"
-        "<extra></extra>"
+    st.warning(
+        "산점도를 만들 데이터가 없습니다."
     )
-)
-
-st.plotly_chart(
-    fig4,
-    use_container_width=True
-)
-
-st.write(
-    "💡 색이 진할수록 해당 월·요일의 "
-    "일관객 합계가 많습니다."
-)
 
 
 # ============================================================
 # ⑤ 장르별 총 관객 수 상자 그림
+#    ★ 영화가 10편 이하인 장르만
 # ============================================================
 
-st.subheader("⑤ 장르별 총 관객 수 상자 그림")
+st.subheader(
+    "⑤ 장르별 총 관객 수 상자 그림"
+)
 
 
-# 장르별 영화 수 계산
 genre_counts = (
     df["genre"]
     .value_counts()
 )
 
 
-# ------------------------------------------------------------
-# ★ 영화가 10편 이하인 장르만 선택
-# ------------------------------------------------------------
-
+# ★ 10편 이하인 장르만 선택
 valid_genres = genre_counts[
     genre_counts <= 10
 ].index.tolist()
 
 
-# 해당 장르만 추출
 box_data = df[
-    df["genre"].isin(valid_genres)
+    df["genre"].isin(
+        valid_genres
+    )
 ].copy()
 
 
@@ -585,10 +607,6 @@ if len(box_data) > 0:
     )
 
 
-    # --------------------------------------------------------
-    # 이상치에 마우스를 올리면 영화명 표시
-    # --------------------------------------------------------
-
     fig5.update_traces(
         hovertemplate=(
             "<b>%{customdata[0]}</b><br>"
@@ -617,8 +635,107 @@ if len(box_data) > 0:
         "점에 마우스를 올리면 영화명이 표시됩니다."
     )
 
+
 else:
 
     st.info(
         "현재 데이터에는 영화가 10편 이하인 장르가 없습니다."
+    )
+
+
+# ============================================================
+# ⑥ 첫 주 관객 수를 점 크기로 넣은 버블 그래프
+# ============================================================
+
+st.subheader(
+    "⑥ 첫 주 관객 수를 반영한 버블 그래프"
+)
+
+
+# ------------------------------------------------------------
+# first_week_audi 컬럼 존재 여부 확인
+# ------------------------------------------------------------
+
+if "first_week_audi" in df.columns:
+
+    bubble_data = df.dropna(
+        subset=[
+            "audiCnt",
+            "total_audi",
+            "first_week_audi",
+            "movieNm"
+        ]
+    ).copy()
+
+
+    # 첫 주 관객 수가 0보다 큰 데이터만 사용
+    bubble_data = bubble_data[
+        bubble_data["first_week_audi"] > 0
+    ]
+
+
+    if len(bubble_data) > 0:
+
+        fig6 = px.scatter(
+            bubble_data,
+            x="audiCnt",
+            y="total_audi",
+            size="first_week_audi",
+            hover_name="movieNm",
+            size_max=60,
+            title=(
+                "일일 관객 수 × 총 관객 수 "
+                "(버블 크기 = 첫 주 관객)"
+            ),
+            labels={
+                "audiCnt": "일일 관객 수",
+                "total_audi": "총 관객 수",
+                "first_week_audi": "첫 주 관객 수"
+            }
+        )
+
+
+        fig6.update_traces(
+            hovertemplate=(
+                "<b>%{hovertext}</b><br>"
+                "일일 관객: %{x:,}명<br>"
+                "총 관객: %{y:,}명<br>"
+                "첫 주 관객: %{marker.size:,}명"
+                "<extra></extra>"
+            )
+        )
+
+
+        fig6.update_layout(
+            xaxis_title="일일 관객 수",
+            yaxis_title="총 관객 수"
+        )
+
+
+        st.plotly_chart(
+            fig6,
+            use_container_width=True
+        )
+
+
+        st.write(
+            "💡 버블이 클수록 첫 주 관객 수가 많은 영화입니다."
+        )
+
+
+    else:
+
+        st.info(
+            "first_week_audi 값이 있는 데이터가 없어 "
+            "버블 그래프를 표시할 수 없습니다."
+        )
+
+
+else:
+
+    st.info(
+        "현재 KOBIS 일일 박스오피스 데이터에는 "
+        "first_week_audi(첫 주 관객) 항목이 없습니다. "
+        "첫 주 관객 데이터가 포함된 누적 데이터를 사용하면 "
+        "⑥ 버블 그래프를 만들 수 있습니다."
     )
