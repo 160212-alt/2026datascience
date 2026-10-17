@@ -45,7 +45,7 @@ def 홈_화면():
     st.Page("pages/2_분류_모델.py", title="2. 분류 모델", icon="🔎"),
     st.Page("pages/3_채점표.py", title="3_채점표", icon="🔎"),
      st.Page("pages/4_전처리.py", title="4_전처리", icon="🔎"),
-     st.Page("pages/5_내가만든모델소개.py", title="5_내가만든모델소개.py", icon="🔎"),
+     st.Page("pages/5_내가_만든_모델_소개.py", title="5_내가_만든_모델_소개.py", icon="🔎"),
 ])
 
 페이지.run()
