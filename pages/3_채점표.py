@@ -1,126 +1,129 @@
-# pages/3_채점표.py — 네 칸으로 세고 네 지표로 채점한다
+# pages/3_채점표.py — 속성을 골라 두 모델을 학습하고, 두 축으로 자른 자리를 그림으로 본다
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
-from sklearn.tree import DecisionTreeClassifier
+from sklearn.tree import DecisionTreeClassifier, export_text
 
-st.set_page_config(page_title="채점표", page_icon="📋", layout="wide")
-st.title("📋 채점표")
-st.write("정확도 하나로는 알 수 없던 것을 네 칸으로 세어 봅니다.")
+st.set_page_config(page_title="분류 모델", page_icon="🤖", layout="wide")
+st.title("🤖 분류 모델")
+st.write("뇌졸중을 겪었는지 아닌지를 맞히는 모델 두 개를 만들고, 채점용 사람들로 정확도를 봅니다.")
 
 데이터주소 = "https://raw.githubusercontent.com/greatsong/modudata/main/data/stroke.csv"
-입력열 = ["age", "avg_glucose_level", "hypertension", "heart_disease"]
+고를수있는열 = ["age", "avg_glucose_level", "bmi", "hypertension", "heart_disease"]
+기본열 = ["age", "avg_glucose_level", "hypertension", "heart_disease"]
+입력이름 = {"age": "나이", "avg_glucose_level": "평균 혈당", "bmi": "체질량지수",
+            "hypertension": "고혈압", "heart_disease": "심장병"}
+칸수 = 60
+칸색 = ["#e2e8f0", "#fef3c7", "#dbeafe", "#dcfce7", "#fae8ff", "#ffe4e6", "#ede9fe", "#f8fafc"]
 
 
 @st.cache_data
 def 데이터_읽기():
+    """번호 순으로 정렬해 둔다. 나누는 자리가 늘 같아야 점수를 비교할 수 있다."""
     return pd.read_csv(데이터주소, encoding="utf-8").sort_values("id").reset_index(drop=True)
 
 
+def 우리말(열):
+    return 입력이름[열]
+
+
 df = 데이터_읽기()
-채점용 = pd.Series(df.index % 10 < 3, index=df.index)   # '분류 모델' 페이지와 같은 방법으로 나눈다
-X = df[입력열]
-y = df["stroke"]
+고른열 = st.multiselect("입력으로 사용할 속성", 고를수있는열, default=기본열, format_func=우리말)
+입력열 = [열 for 열 in 고를수있는열 if 열 in 고른열]   # 고른 차례와 상관없이 늘 같은 순서로 둔다
+if len(입력열) < 2:
+    st.warning("속성을 두 개 이상 골라 주세요. 하나만으로는 그림의 두 축을 만들 수 없습니다.")
+    st.stop()
 
-크기맞추기 = StandardScaler().fit(X[~채점용])
-확률모델 = LogisticRegression(max_iter=2000).fit(크기맞추기.transform(X[~채점용]), y[~채점용])
-질문모델 = DecisionTreeClassifier(max_depth=3, min_samples_leaf=5, random_state=0).fit(X[~채점용], y[~채점용])
+채점용 = pd.Series(df.index % 10 < 3, index=df.index)   # 열 명 중 앞 세 명이 채점용
+X = df[입력열].copy()
+y = df["stroke"]                                        # 1이면 뇌졸중, 0이면 아님. 뇌졸중이 양성이다
+if "bmi" in 입력열 and X["bmi"].isna().any():
+    중앙값 = float(X.loc[~채점용, "bmi"].median())
+    X["bmi"] = X["bmi"].fillna(중앙값)
+    st.warning(f"체질량지수가 비어 있는 사람은 훈련용의 중앙값 {중앙값:.1f}으로 채웠습니다.")
 
-많은쪽 = int(y[~채점용].mode()[0])
+
+def 학습(열들):
+    """고른 열로 두 모델을 학습해 돌려준다. 설정은 늘 같다."""
+    훈련 = X.loc[~채점용, 열들]
+    크기맞추기 = StandardScaler().fit(훈련)   # 크기 맞추기도 훈련용으로만 한다
+    확률모델 = LogisticRegression(max_iter=2000).fit(크기맞추기.transform(훈련), y[~채점용])
+    # 질문으로 답하는 모델은 값의 크기에 영향받지 않으므로 크기를 맞추지 않은 값을 그대로 사용한다
+    질문모델 = DecisionTreeClassifier(max_depth=3, min_samples_leaf=5, random_state=0).fit(훈련, y[~채점용])
+    return 크기맞추기, 확률모델, 질문모델
+
+
+크기맞추기, 확률모델, 질문모델 = 학습(입력열)
+많은쪽 = int(y[~채점용].mode()[0])                       # 훈련용에서 사람이 많은 범주
 실제 = y[채점용].to_numpy()
-예측 = {
-    "확률로 답하는 모델": (확률모델.predict_proba(크기맞추기.transform(X[채점용]))[:, 1] >= 0.5).astype(int),
-    "질문으로 답하는 모델": 질문모델.predict(X[채점용]),
-    "한쪽으로만 답하는 모델": pd.Series(많은쪽, index=y[채점용].index).to_numpy(),
-}
 
-st.info(f"채점용은 {len(실제):,}명이고 그중 실제 뇌졸중은 {int(실제.sum()):,}명입니다.")
+st.info(f"훈련용 {int((~채점용).sum()):,}명(그중 뇌졸중 {int(y[~채점용].sum()):,}명)으로 학습하고, "
+        f"채점용 {int(채점용.sum()):,}명(그중 실제 뇌졸중 {int(실제.sum()):,}명)으로 채점합니다.")
 
+st.subheader("채점용 사람들에서의 정확도")
+예측 = {"확률로 답하는 모델": 확률모델.predict(크기맞추기.transform(X[채점용])),
+        "질문으로 답하는 모델": 질문모델.predict(X[채점용]),
+        "한쪽으로만 답하는 모델": pd.Series(많은쪽, index=y[채점용].index).to_numpy()}
+칸들 = st.columns(3)
+for 칸, (이름, 예측값) in zip(칸들, 예측.items()):
+    칸.metric(이름, f"{(예측값 == 실제).mean():.4f}")
+st.caption("소수 넷째 자리까지 적었습니다. 맨 오른쪽은 입력을 하나도 보지 않고 훈련용에서 사람이 많은 쪽으로만 "
+           "답하는 모델입니다. 세 값을 교재의 표에 적어 두세요.")
 
-def 네칸(예측값):
-    """행은 실제, 열은 예측. 네 칸의 사람 수를 센다."""
-    TP = int(((실제 == 1) & (예측값 == 1)).sum())        # 뇌졸중을 뇌졸중이라 맞힌 사람 (찾아낸 환자)
-    FN = int(((실제 == 1) & (예측값 == 0)).sum())        # 뇌졸중을 아니라고 놓친 사람 (놓친 환자)
-    FP = int(((실제 == 0) & (예측값 == 1)).sum())        # 아닌데 뇌졸중이라 헛짚은 사람
-    TN = int(((실제 == 0) & (예측값 == 0)).sum())        # 아닌 사람을 아니라고 맞힌 사람
-    return TP, FN, FP, TN
+st.subheader("고른 속성 가운데 둘을 축으로 놓고 본다")
+축칸 = st.columns(2)
+가로 = 축칸[0].selectbox("가로축", 입력열, index=0, format_func=우리말)
+세로후보 = [열 for 열 in 입력열 if 열 != 가로]
+세로 = 축칸[1].selectbox("세로축", 세로후보, index=0, format_func=우리말)
 
-
-def 혼동행렬표(TP, FN, FP, TN):
-    표 = pd.DataFrame(
-        [[f"{TP}명 (TP)", f"{FN}명 (FN)", f"{TP + FN}명"],
-         [f"{FP}명 (FP)", f"{TN}명 (TN)", f"{FP + TN}명"],
-         [f"{TP + FP}명", f"{FN + TN}명", f"{TP + FN + FP + TN}명"]],
-        index=["실제 뇌졸중", "실제 아님", "열 합계"],
-        columns=["뇌졸중이라 예측", "아니라고 예측", "행 합계"])
-    표.index.name = "행 = 실제 · 열 = 예측"
-    return 표
+두축 = [가로, 세로]
+그림크기맞추기, 그림확률모델, 그림질문모델 = 학습(두축)   # 그림은 두 축만으로 다시 학습한 모델로 그린다
+채점입력 = X[채점용]
 
 
-def 지표(TP, FN, FP, TN):
-    """네 칸에서 네 지표를 구한다. 분모가 0이면 None을 돌려준다."""
-    정확도 = (TP + TN) / (TP + FN + FP + TN)
-    정밀도 = TP / (TP + FP) if (TP + FP) > 0 else None   # 분모는 뇌졸중이라 예측한 사람 수
-    재현율 = TP / (TP + FN) if (TP + FN) > 0 else None   # 분모는 실제 뇌졸중인 사람 수
-    F1_분모 = 2 * TP + FP + FN
-    F1 = 2 * TP / F1_분모 if F1_분모 > 0 else None   # 정밀도를 구할 수 없어도 값이 나온다
-    return 정확도, 정밀도, 재현율, F1
+def 눈금(열):
+    """채점용에서 가장 작은 값부터 가장 큰 값까지 고르게 나눈 값들을 돌려준다."""
+    작은값, 큰값 = float(채점입력[열].min()), float(채점입력[열].max())
+    큰값 = 큰값 if 큰값 > 작은값 else 작은값 + 1.0
+    return [작은값 + (큰값 - 작은값) * i / (칸수 - 1) for i in range(칸수)]
 
 
-def 소수(값):
-    return "계산할 수 없음" if 값 is None else f"{값:.4f}"
+def 두줄로(값들):   # 한 줄로 늘어선 값을 세로줄마다 잘라 표 모양으로 만든다
+    return [값들[i * 칸수:(i + 1) * 칸수] for i in range(칸수)]
 
 
-네칸값 = {이름: 네칸(예측값) for 이름, 예측값 in 예측.items()}
+가로눈금, 세로눈금 = 눈금(가로), 눈금(세로)
+격자 = pd.DataFrame([{가로: 가, 세로: 세} for 세 in 세로눈금 for 가 in 가로눈금])[두축]
+확률격자 = 그림확률모델.predict_proba(그림크기맞추기.transform(격자))[:, 1].tolist()
+마디번호 = 그림질문모델.apply(격자).tolist()          # 각 자리가 트리의 어느 마디에 떨어지는지
+자리 = {마디: 번호 for 번호, 마디 in enumerate(sorted(set(마디번호)))}
+마디수 = len(자리)
+색단계 = [[(번호 + 끝) / 마디수, 칸색[번호 % len(칸색)]] for 번호 in range(마디수) for 끝 in (0, 1)]
 
-st.subheader("혼동행렬 · 네 칸으로 세기")
-왼쪽, 오른쪽 = st.columns(2)
-for 자리, 이름 in ((왼쪽, "확률로 답하는 모델"), (오른쪽, "질문으로 답하는 모델")):
-    with 자리:
-        st.markdown(f"**{이름}**")
-        st.table(혼동행렬표(*네칸값[이름]))
-st.caption("TP는 찾아낸 환자, FN은 놓친 환자, FP는 헛짚은 사람, TN은 아닌 사람을 아니라고 맞힌 사람입니다.")
+그림 = go.Figure()
+그림.add_trace(go.Heatmap(x=가로눈금, y=세로눈금, z=두줄로([자리[마디] for 마디 in 마디번호]),
+                          colorscale=색단계, zmin=-0.5, zmax=마디수 - 0.5, opacity=0.45,
+                          showscale=False, hoverinfo="skip"))
+그림.add_trace(go.Contour(x=가로눈금, y=세로눈금, z=두줄로(확률격자),
+                          contours=dict(coloring="lines", start=0.5, end=0.5, size=1),
+                          line=dict(width=3, color="#2563eb"), showscale=False, hoverinfo="skip"))
+점표 = pd.DataFrame({"가로": 채점입력[가로].to_numpy(), "세로": 채점입력[세로].to_numpy(),
+                     "실제": pd.Series(실제).map({1: "뇌졸중 있음", 0: "뇌졸중 없음"}).to_numpy()})
+for 이름, 색 in (("뇌졸중 없음", "#94a3b8"), ("뇌졸중 있음", "#7f1d1d")):
+    한무리 = 점표[점표["실제"] == 이름]
+    그림.add_trace(go.Scatter(x=한무리["가로"], y=한무리["세로"], mode="markers", name=이름,
+                              marker=dict(size=6, color=색, opacity=0.5)))
+그림.update_layout(title=f"가로축 {우리말(가로)} · 세로축 {우리말(세로)}", xaxis_title=우리말(가로),
+                   yaxis_title=우리말(세로), height=560)
+st.plotly_chart(그림, width="stretch")
+if not (min(확률격자) <= 0.5 <= max(확률격자)):
+    st.info(f"이 그림 안에서 확률이 가장 높은 자리도 {max(확률격자):.2f}입니다. "
+            f"확률이 0.5를 넘는 자리가 없어 경계선이 그림 안에 없습니다.")
+st.caption("점은 채점용 사람들이고 색은 실제 뇌졸중 여부입니다. 파란 선은 확률로 답하는 모델이 0.5로 가르는 자리, "
+           "옅은 색으로 나뉜 바탕은 질문으로 답하는 모델이 두 축을 나눈 칸입니다. 고른 두 축만으로 다시 학습한 그림입니다.")
 
-st.subheader("네 칸에서 구한 네 지표")
-줄 = []
-for 이름 in 예측:
-    TP, FN, FP, TN = 네칸값[이름]
-    정확도, 정밀도, 재현율, F1 = 지표(TP, FN, FP, TN)
-    줄.append({"모델": 이름, "TP (찾아낸 환자)": TP, "FP (헛짚은 사람)": FP,
-               "FN (놓친 환자)": FN, "TN": TN, "정확도": 소수(정확도),
-               "정밀도": 소수(정밀도), "재현율": 소수(재현율), "F1": 소수(F1)})
-st.dataframe(pd.DataFrame(줄), width="stretch", hide_index=True)
-st.caption("정확도의 분모는 채점용 전체 인원, 정밀도의 분모는 뇌졸중이라 예측한 사람 수, "
-           "재현율의 분모는 실제 뇌졸중인 사람 수입니다. F1은 2 × 정밀도 × 재현율 ÷ (정밀도 + 재현율)입니다. "
-           "뇌졸중이라 예측한 사람이 0명이면 정밀도와 F1은 계산할 수 없습니다.")
-
-st.subheader("누구를 놓쳤고 누구를 헛짚었는가")
-고른모델 = st.radio("어느 모델의 목록을 볼까요", list(예측), horizontal=True)
-TP, FN, FP, TN = 네칸값[고른모델]
-예측값 = 예측[고른모델]
-채점명단 = df[채점용].copy()
-채점명단["고혈압"] = 채점명단["hypertension"].map({1: "있음", 0: "없음"})
-채점명단["심장병"] = 채점명단["heart_disease"].map({1: "있음", 0: "없음"})
-보일열 = {"id": "번호", "age": "나이", "avg_glucose_level": "평균 혈당",
-          "고혈압": "고혈압", "심장병": "심장병"}
-
-
-def 목록(뽑을자리):
-    골라낸 = 채점명단[뽑을자리].sort_values("age", ascending=False)
-    return 골라낸[list(보일열)].rename(columns=보일열)
-
-
-놓친환자 = 목록((실제 == 1) & (예측값 == 0))
-헛짚은사람 = 목록((실제 == 0) & (예측값 == 1))
-왼쪽, 오른쪽 = st.columns(2)
-with 왼쪽:
-    st.markdown(f"**놓친 환자 · 모두 {len(놓친환자):,}명**")
-    st.dataframe(놓친환자.head(20), width="stretch", hide_index=True)
-with 오른쪽:
-    st.markdown(f"**헛짚은 사람 · 모두 {len(헛짚은사람):,}명**")
-    st.dataframe(헛짚은사람.head(20), width="stretch", hide_index=True)
-st.caption(f"나이가 많은 순서로 앞 스무 줄까지만 보여 줍니다. "
-           f"놓친 환자 {len(놓친환자):,}명은 혼동행렬의 FN 칸과 같고, "
-           f"헛짚은 사람 {len(헛짚은사람):,}명은 FP 칸과 같습니다.")
-st.caption("이 목록에 있는 것은 번호뿐입니다. 누구인지 알 수 없고, 알 수 있어서도 안 됩니다.")
+st.subheader("질문으로 답하는 모델은 어떤 순서로 물었는가")
+st.text(export_text(질문모델, feature_names=[입력이름[열] for 열 in 입력열]))
+st.caption("맨 위가 첫 질문입니다. class가 1이면 뇌졸중, 0이면 아님이라고 답한 자리입니다.")
